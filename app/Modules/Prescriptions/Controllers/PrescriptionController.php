@@ -31,9 +31,7 @@ class PrescriptionController extends Controller {
         return openssl_decrypt($encrypted_data, 'aes-256-cbc', $encryption_key, 0, $iv);
     }
 
-    /**
-     * PRIVATE HELPER: Library illama manual-aa token-ai decode panni validate pannum logic.
-     */
+    // validate the role to accept or decline
     private function getValidatedUser($requiredRoles) {
         $headers = getallheaders();
         

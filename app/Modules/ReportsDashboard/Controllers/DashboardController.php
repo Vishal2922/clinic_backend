@@ -14,7 +14,7 @@ class DashboardController extends Controller {
     }
 
     /**
-     * AES ENCRYPTION HELPERS: Conflict varaama irukka controller-kulla helper methods-aa vachukalaam.
+     * AES ENCRYPTION HELPERS: Conflict 
      */
     private function encryptData($data) {
         $encryption_key = $_ENV['APP_KEY'] ?? null; 
