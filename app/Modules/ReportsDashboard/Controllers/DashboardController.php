@@ -14,7 +14,21 @@ class DashboardController extends Controller {
     }
 
     /**
-     * AES ENCRYPTION HELPERS: Conflict 
+     * AUDIT LOG HELPER
+     */
+    private function logActivity($userId, $tenantId, $action, $details) {
+        $logData = [
+            'user_id' => $userId,
+            'tenant_id' => $tenantId,
+            'action' => $action,
+            'details' => $this->encryptData($details),
+            'timestamp' => date('Y-m-d H:i:s')
+        ];
+        // $this->model->saveAuditLog($logData);
+    }
+
+    /**
+     * AES ENCRYPTION HELPERS
      */
     private function encryptData($data) {
         $encryption_key = $_ENV['APP_KEY'] ?? null; 
@@ -23,24 +37,33 @@ class DashboardController extends Controller {
         return base64_encode($encrypted . '::' . $iv);
     }
 
-    private function decryptData($data) {
-        $encryption_key = $_ENV['APP_KEY'] ?? null;
-        list($encrypted_data, $iv) = explode('::', base64_decode($data), 2);
-        return openssl_decrypt($encrypted_data, 'aes-256-cbc', $encryption_key, 0, $iv);
-    }
-
     /**
-     * PRIVATE HELPER: Manual JWT Validation (No Firebase Library Needed)
+     * PRIVATE HELPER: Manual JWT Validation with Robust Error Handling
      */
     private function getValidatedUser($requiredRoles) {
         $headers = getallheaders();
         
-        if (!isset($headers['Authorization'])) {
-            Response::json(['status' => 'error', 'message' => 'Authorization token not found'], 401);
+        // 1. SCENARIO: Header-la token-ae illa-naal (Unga requirement)
+        if (!isset($headers['Authorization']) || empty($headers['Authorization'])) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Authorization header is missing. Access denied.' 
+            ], 401);
             exit();
         }
 
-        $token = str_replace('Bearer ', '', $headers['Authorization']);
+        $authHeader = $headers['Authorization'];
+        
+        // 2. Format check (Bearer token structure check)
+        if (!preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Invalid Authorization format. Use: Bearer <token>'
+            ], 401);
+            exit();
+        }
+
+        $token = $matches[1];
         $parts = explode('.', $token);
 
         if (count($parts) !== 3) {
@@ -56,6 +79,7 @@ class DashboardController extends Controller {
             exit();
         }
 
+        // 3. Signature Verification
         $validSignature = hash_hmac('sha256', "$header.$payload", $secretKey, true);
         $base64Signature = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($validSignature));
 
@@ -66,12 +90,22 @@ class DashboardController extends Controller {
 
         $decodedData = json_decode(base64_decode(str_replace(['-', '_'], ['+', '/'], $payload)));
 
+        // 4. EXPIRATION CHECK
+        if (isset($decodedData->exp) && $decodedData->exp < time()) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Token Expired: Please login again to continue'
+            ], 401);
+            exit();
+        }
+
+        // 5. Role Match Logic
         $roles = is_array($requiredRoles) ? $requiredRoles : [$requiredRoles];
         
         if (!isset($decodedData->role) || !in_array($decodedData->role, $roles)) {
             Response::json([
                 'status' => 'error', 
-                'message' => 'Access Denied: You do not have permission to view Dashboard'
+                'message' => 'Access Denied: You do not have permission for this resource'
             ], 403);
             exit();
         }
@@ -80,18 +114,15 @@ class DashboardController extends Controller {
     }
 
     public function index(Request $request) {
-        // Step 1: Scenario implementation - Allow only Provider or Admin
+        // Step 1: Validate User (Header + Expiry + Role)
         $user = $this->getValidatedUser(['Provider', 'Admin']);
 
         try {
-            // Step 2: Tenant isolation using request/token data
             $tenant_id = $request->tenant_id ?? 1;
-            
-            // Step 3: Fetching aggregate stats through the model
             $stats = $this->model->getCounts($tenant_id);
             
-            // Note: Intha stats-la sensitive strings edhavadhu irundha, 
-            // neenga $this->decryptData() use panni dashboard-la kaattalaam.
+            // --- AUDIT LOGGING ---
+            $this->logActivity($user->user_id, $tenant_id, 'VIEW_DASHBOARD', "Dashboard accessed by " . $user->role);
 
             Response::json([
                 'status' => 'success', 

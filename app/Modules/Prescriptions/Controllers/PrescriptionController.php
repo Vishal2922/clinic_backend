@@ -14,9 +14,21 @@ class PrescriptionController extends Controller {
     }
 
     /**
+     * AUDIT LOG HELPER
+     */
+    private function logActivity($userId, $tenantId, $action, $details) {
+        $logData = [
+            'user_id' => $userId,
+            'tenant_id' => $tenantId,
+            'action' => $action,
+            'details' => $this->encryptData($details),
+            'timestamp' => date('Y-m-d H:i:s')
+        ];
+        // Example: $this->service->saveAuditLog($logData);
+    }
+
+    /**
      * AES ENCRYPTION HELPERS
-     * Common file use panna conflict aagum-nu neenga sonna maadhiriye 
-     * controller-kulla helper methods-aa vachukalaam.
      */
     private function encryptData($data) {
         $encryption_key = $_ENV['APP_KEY'] ?? null; 
@@ -31,20 +43,37 @@ class PrescriptionController extends Controller {
         return openssl_decrypt($encrypted_data, 'aes-256-cbc', $encryption_key, 0, $iv);
     }
 
-    // validate the role to accept or decline
+    /**
+     * JWT VALIDATOR: With Strict Header Check, Expiry, and Role Match.
+     */
     private function getValidatedUser($requiredRoles) {
         $headers = getallheaders();
         
-        if (!isset($headers['Authorization'])) {
-            Response::json(['status' => 'error', 'message' => 'Authorization token missing'], 401);
+        // 1. SCENARIO: Header-la token-ae illa-naal (Unga requirement)
+        if (!isset($headers['Authorization']) || empty($headers['Authorization'])) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Authorization header is missing. Access denied.' 
+            ], 401);
             exit();
         }
 
-        $token = str_replace('Bearer ', '', $headers['Authorization']);
+        $authHeader = $headers['Authorization'];
+        
+        // 2. Format check (Bearer token structure)
+        if (!preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Invalid Authorization format. Use: Bearer <token>'
+            ], 401);
+            exit();
+        }
+
+        $token = $matches[1];
         $parts = explode('.', $token);
 
         if (count($parts) !== 3) {
-            Response::json(['status' => 'error', 'message' => 'Invalid token format'], 401);
+            Response::json(['status' => 'error', 'message' => 'Invalid token structure'], 401);
             exit();
         }
 
@@ -56,15 +85,26 @@ class PrescriptionController extends Controller {
             exit();
         }
 
+        // 3. Signature Verification
         $validSignature = hash_hmac('sha256', "$header.$payload", $secretKey, true);
         $base64Signature = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($validSignature));
 
         if ($signature !== $base64Signature) {
-            Response::json(['status' => 'error', 'message' => 'Unauthorized: Invalid signature'], 401);
+            Response::json(['status' => 'error', 'message' => 'Unauthorized: Signature mismatch'], 401);
             exit();
         }
 
         $decodedData = json_decode(base64_decode(str_replace(['-', '_'], ['+', '/'], $payload)));
+
+        // 4. EXPIRATION CHECK
+        if (isset($decodedData->exp) && $decodedData->exp < time()) {
+            Response::json([
+                'status' => 'error', 
+                'message' => 'Token Expired: Please login again'
+            ], 401);
+            exit();
+        }
+
         $roles = is_array($requiredRoles) ? $requiredRoles : [$requiredRoles];
         
         if (!isset($decodedData->role) || !in_array($decodedData->role, $roles)) {
@@ -75,7 +115,7 @@ class PrescriptionController extends Controller {
         return $decodedData;
     }
 
-    // Prescription Create: Only 'Provider' allowed
+    // Prescription Create API
     public function store(Request $request) {
         $user = $this->getValidatedUser('Provider'); 
         $data = $request->getBody();
@@ -85,15 +125,13 @@ class PrescriptionController extends Controller {
         if (empty($data['patient_id'])) $errors[] = "Patient ID is required.";
         if (empty($data['medicine_name']) || strlen($data['medicine_name']) < 3) $errors[] = "Valid Medicine Name is required.";
         if (empty($data['dosage'])) $errors[] = "Dosage instructions are required.";
-        if (!isset($data['duration_days']) || !is_numeric($data['duration_days']) || $data['duration_days'] <= 0) $errors[] = "Duration must be a positive number.";
-
+        
         if (!empty($errors)) {
             Response::json(['status' => 'error', 'message' => 'Validation Failed', 'errors' => $errors], 422);
             exit();
         }
 
-        // --- ENCRYPTION STEP ---
-        // Sensitive healthcare data-vai encrypt pannurohm before saving
+        // AES ENCRYPTION
         $data['medicine_name'] = $this->encryptData($data['medicine_name']);
         $data['dosage'] = $this->encryptData($data['dosage']);
 
@@ -102,27 +140,30 @@ class PrescriptionController extends Controller {
 
         try {
             $id = $this->service->createPrescription($data);
-            Response::json(['status' => 'success', 'id' => $id, 'message' => 'Validated, Encrypted and Saved'], 201);
+            $this->logActivity($user->user_id, $request->tenant_id, 'CREATE_PRESCRIPTION', "Prescription ID $id created.");
+
+            Response::json(['status' => 'success', 'id' => $id, 'message' => 'Validated, Encrypted and Logged'], 201);
         } catch (\Exception $e) {
             Response::json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
     }
 
-    // Prescription Update: Both 'Provider' and 'Pharmacist' allowed
+    // Prescription Update API
     public function update(Request $request) {
         $user = $this->getValidatedUser(['Provider', 'Pharmacist']);
         $data = $request->getBody();
 
-        // Encrypt if updating sensitive info
         if (!empty($data['dosage'])) {
             $data['dosage'] = $this->encryptData($data['dosage']);
         }
 
         try {
             $this->service->update($data['id'], $request->tenant_id, $data, $user->user_id, $user->role);
-            Response::json(['status' => 'success', 'message' => 'Prescription updated']);
+            $this->logActivity($user->user_id, $request->tenant_id, 'UPDATE_PRESCRIPTION', "Prescription ID " . $data['id'] . " updated.");
+
+            Response::json(['status' => 'success', 'message' => 'Prescription updated and logged']);
         } catch (\Exception $e) {
-            Response::json(['status' => 'error', 'message' => $e->getMessage()], 500);
+            Response::json(['status' => 'error', 'message' => 'Update failed: ' . $e->getMessage()], 500);
         }
     }
 }

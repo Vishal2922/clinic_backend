@@ -2,53 +2,58 @@
 namespace App\Modules\Prescriptions\Services;
 
 use App\Modules\Prescriptions\Models\Prescription;
-use App\Core\Security\CryptoService;
 
 class PrescriptionService {
     private $model;
-    private $crypto;
 
     public function __construct() {
         $this->model = new Prescription();
-        $this->crypto = new CryptoService();
+        // CryptoService dependency-ai remove pannitom, conflict varaama irukka.
     }
 
-    // Module 5: Create logic with Encryption
+    /**
+     * Module 5: Create logic
+     * Note: Controller-laye data encrypt aagi varuvadhala, inga direct-aa save pannalaam.
+     */
     public function createPrescription($data) {
-        $encryptedMedicines = $this->crypto->encrypt(json_encode($data['medicines']));
-        
         return $this->model->create([
-            'tenant_id' => $data['tenant_id'], // Multi-tenancy isolation
+            'tenant_id'      => $data['tenant_id'],    // Multi-tenancy isolation
             'appointment_id' => $data['appointment_id'],
-            'patient_id' => $data['patient_id'],
-            'provider_id' => $data['provider_id'], // Seeded 'Provider' role user
-            'medicines' => $encryptedMedicines,
-            'notes' => $data['notes'] ?? ''
+            'patient_id'     => $data['patient_id'],
+            'provider_id'    => $data['provider_id'],  // From getValidatedUser()
+            'medicine_name'  => $data['medicine_name'], // Already AES Encrypted in Controller
+            'dosage'         => $data['dosage'],        // Already AES Encrypted in Controller
+            'duration_days'  => $data['duration_days'],
+            'notes'          => $data['notes'] ?? ''
         ]);
     }
 
     /**
-     * 🔥 FIX: Intha method thaan Controller-la irundhu call aaganum.
-     * Pharmacist dispense panna pharmacist_id-ah track panroam.
+     * Update method for Status and Pharmacist tracking
      */
     public function update($id, $tenant_id, $data, $userId, $userRole) {
-        // 1. Prescription unga clinic-u dhaan-nu verify panroam
+        // 1. Prescription unga clinic-u dhaan-nu verify panroam (Tenant Isolation)
         $prescription = $this->model->findById($id, $tenant_id);
         if (!$prescription) {
             throw new \Exception("Prescription not found or unauthorized access");
         }
 
-        // 2. Medicines update panna thirumbavum encrypt pannanum
-        if (isset($data['medicines'])) {
-            $data['medicines'] = $this->crypto->encrypt(json_encode($data['medicines']));
+        // 2. Data update logic
+        $updateData = [];
+        
+        // Controller-la irundhu encrypted dosage vandhaa mattum edukkurohm
+        if (isset($data['dosage'])) {
+            $updateData['dosage'] = $data['dosage'];
         }
 
-        // 3. Pharmacist roles-ah base panni status update
-        $status = $data['status'] ?? 'dispensed';
+        // 3. Status matum Pharmacist ID tracking
+        // Pharmacist dispense panna avanga ID-ai pharmacist_id column-la track panroam
+        $updateData['status'] = $data['status'] ?? 'dispensed';
         
-        // Teammate seed panna 'Pharmacist' role-ah irundha ID-yah track panroam
-        $pharmacistId = ($userRole === 'Pharmacist') ? $userId : null;
+        if ($userRole === 'Pharmacist') {
+            $updateData['pharmacist_id'] = $userId;
+        }
 
-        return $this->model->updateStatus($id, $tenant_id, $status, $pharmacistId);
+        return $this->model->updateStatus($id, $tenant_id, $updateData);
     }
 }
