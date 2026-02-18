@@ -1,4 +1,35 @@
+# 1. Enable Rewrite Engine
 RewriteEngine On
+
+# 2. Redirect to index.php
+# Existing files (!-f) or directories (!-d) illana mattum index.php-ku route pannum.
+# HEAD version logic and teammate's version are merged for maximum compatibility.
+
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# 3. Security Headers (Teammate's addition - Highly Recommended)
+# Healthcare data security-kaaga intha headers browser level-la protect pannum.
+<IfModule mod_headers.c>
+    # Prevent MIME type sniffing (Prevents browsers from guessing file types)
+    Header always set X-Content-Type-Options "nosniff"
+    
+    # Anti-Clickjacking (Prevents your site from being rendered in an iframe)
+    Header always set X-Frame-Options "DENY"
+    
+    # Enable XSS filtering (Cross-site scripting protection for browsers)
+    Header always set X-XSS-Protection "1; mode=block"
+    
+    # Strict-Transport-Security (HTTPS force panna - production-ku use aagum)
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+</IfModule>
+
+# 4. Privacy & Access Protection
+# Folder ulla enna files irukunu outsiders paakka mudiyaadhu.
+Options -Indexes
+
+# Sensitive files-ah hide pannum (.env, logs, etc.)
+<FilesMatch "^\.env|composer\.(json|lock)|package(-lock)?\.json$|^.*\.log$">
+    Require all denied
+</FilesMatch>

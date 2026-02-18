@@ -1,145 +1,169 @@
 <?php
-namespace App\Core;
-
-class Router {
-    protected $routes = [];
-
-    // Standardize paths (ensures leading slash and removes trailing slash)
-    private function standardizePath($path) {
-        return '/' . trim($path, '/');
-    }
-
-    public function get($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['get'][$path] = $callback;
-    }
-
-    public function post($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['post'][$path] = $callback;
-    }
-
-    /**
-     * 🔥 FIX: PUT method-ah register panna intha function kandippa venum.
-     * Ippo dhaan /prescriptions (PUT) route work aagum.
-     */
-    public function put($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['put'][$path] = $callback;
-    }
-
-    public function resolve(Request $request) {
-        $method = $request->getMethod(); // GET, POST, or PUT
-        $path = $this->standardizePath($request->getPath()); 
-        
-        $callback = $this->routes[$method][$path] ?? false;
-
-        if (!$callback) {
-            http_response_code(404);
-            header('Content-Type: application/json');
-            echo json_encode([
-                "error" => "Route not found", 
-                "received" => [
-                    "method" => $method, 
-                    "path" => $path
-                ],
-                // Ippo registered_routes-la PUT routes-um kaattum
-                "registered_routes" => array_keys($this->routes[$method] ?? [])
-            ]);
-            exit;
-        }
-
-        $controllerName = $callback[0];
-        $action = $callback[1];
-
-        if (class_exists($controllerName)) {
-            $controller = new $controllerName();
-            return $controller->$action($request);
-        } else {
-            http_response_code(500);
-            header('Content-Type: application/json');
-            echo json_encode([
-                "error" => "Controller class not found",
-                "target_class" => $controllerName
-            ]);
-            exit;
-        }
-    }
-}
-
-
-//-----------------------------------------------------------// 
 
 namespace App\Core;
 
-class Router {
-    protected $routes = [];
+/**
+ * Router Class: Merged Version.
+ * Supports: Grouping, Middleware, Dynamic Route Parameters {id}, and Standard HTTP Methods.
+ */
+class Router
+{
+    private Request $request;
+    private Response $response;
+    private array $routes = [];
+    private array $currentGroupMiddleware = [];
+    private string $currentPrefix = '';
 
-    // URL path-ah standardize panna (e.g., /patients or /patients/)
-    private function standardizePath($path) {
-        return '/' . trim($path, '/');
-    }
-
-    // GET Method register panna
-    public function get($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['get'][$path] = $callback;
-    }
-
-    // POST Method register panna
-    public function post($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['post'][$path] = $callback;
-    }
-
-    // PUT Method register panna (Update operations-ku mukkiyam)
-    public function put($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['put'][$path] = $callback;
-    }
-
-    // DELETE Method register panna (Soft delete operations-ku)
-    public function delete($path, $callback) {
-        $path = $this->standardizePath($path);
-        $this->routes['delete'][$path] = $callback;
+    public function __construct(Request $request, Response $response)
+    {
+        $this->request = $request;
+        $this->response = $response;
     }
 
     /**
-     * Request-ku yetha controller and method-ah kandu puidchi run pannum
+     * Group routes: Common prefix matum middleware sethu register panna idhu use aagum.
      */
-    public function resolve(Request $request) {
-        $method = $request->getMethod(); // get, post, put, etc.
-        $path = $this->standardizePath($request->getPath()); 
-        
-        $callback = $this->routes[$method][$path] ?? false;
+    public function group(array $options, callable $callback): void
+    {
+        $previousPrefix = $this->currentPrefix;
+        $previousMiddleware = $this->currentGroupMiddleware;
 
-        // Route illana 404 error
-        if (!$callback) {
-            Response::json([
-                "error" => "Route not found vro!", 
-                "received" => ["method" => strtoupper($method), "path" => $path]
-            ], 404);
+        $this->currentPrefix .= $options['prefix'] ?? '';
+        
+        if (isset($options['middleware'])) {
+            $middlewares = is_array($options['middleware']) ? $options['middleware'] : [$options['middleware']];
+            $this->currentGroupMiddleware = array_merge($this->currentGroupMiddleware, $middlewares);
         }
 
-        $controllerName = $callback[0];
-        $action = $callback[1];
+        $callback($this);
 
-        // Controller class iruka nu check panroam
-        if (class_exists($controllerName)) {
-            $controller = new $controllerName();
+        $this->currentPrefix = $previousPrefix;
+        $this->currentGroupMiddleware = $previousMiddleware;
+    }
+
+    // Standard Route Registration Methods (Merged from all versions)
+    public function get(string $path, $handler, array $middleware = []): void { $this->addRoute('GET', $path, $handler, $middleware); }
+    public function post(string $path, $handler, array $middleware = []): void { $this->addRoute('POST', $path, $handler, $middleware); }
+    public function put(string $path, $handler, array $middleware = []): void { $this->addRoute('PUT', $path, $handler, $middleware); }
+    public function patch(string $path, $handler, array $middleware = []): void { $this->addRoute('PATCH', $path, $handler, $middleware); }
+    public function delete(string $path, $handler, array $middleware = []): void { $this->addRoute('DELETE', $path, $handler, $middleware); }
+
+    /**
+     * Internal helper to standardize and store routes.
+     */
+    private function addRoute(string $method, string $path, $handler, array $middleware): void
+    {
+        // Standardize path: prefixes merge panni clean slash set pannum.
+        $fullPath = '/' . ltrim($this->currentPrefix . '/' . ltrim($path, '/'), '/');
+        // Group middleware + Route level middleware merge pannum.
+        $allMiddleware = array_merge($this->currentGroupMiddleware, $middleware);
+
+        $this->routes[] = [
+            'method' => strtoupper($method),
+            'path' => rtrim($fullPath, '/') ?: '/',
+            'handler' => $handler,
+            'middleware' => $allMiddleware,
+        ];
+    }
+
+    /**
+     * Dispatch: Request-ku match aagura route-ai kandupidi panni execute pannum.
+     */
+    public function resolve(): void
+    {
+        $requestMethod = strtoupper($this->request->getMethod());
+        $requestUri = '/' . ltrim($this->request->getPath(), '/');
+
+        foreach ($this->routes as $route) {
+            if ($route['method'] !== $requestMethod) {
+                continue;
+            }
+
+            $params = $this->matchRoute($route['path'], $requestUri);
+
+            if ($params !== false) {
+                // 1. Run Middleware Chain
+                foreach ($route['middleware'] as $middleware) {
+                    $this->runMiddleware($middleware);
+                }
+
+                // 2. Call Controller Handler
+                $this->callHandler($route['handler'], $params);
+                return;
+            }
+        }
+
+        // 404 Error: Merged response helper use panni standard output kudukkum.
+        $this->response->error('Route not found vro!', 404, [
+            'method' => $requestMethod,
+            'path' => $requestUri
+        ]);
+    }
+
+    /**
+     * Match route: /patients/{id} maadhiri dynamic parameters-ai extract pannum.
+     */
+    private function matchRoute(string $routePath, string $uri)
+    {
+        $pattern = preg_replace('/\{([a-zA-Z_]+)\}/', '(?P<$1>[^/]+)', $routePath);
+        $pattern = '#^' . $pattern . '$#';
+
+        if (preg_match($pattern, $uri, $matches)) {
+            $params = [];
+            foreach ($matches as $key => $value) {
+                if (is_string($key)) { $params[$key] = $value; }
+            }
+            return $params;
+        }
+        return false;
+    }
+
+    private function runMiddleware($middleware): void
+    {
+        if (is_string($middleware)) {
+            $parts = explode(':', $middleware, 2);
+            $className = $parts[0];
+            $params = isset($parts[1]) ? explode(',', $parts[1]) : [];
+
+            if (class_exists($className)) {
+                $instance = new $className();
+                $instance->handle($this->request, $this->response, $params);
+            }
+        } elseif (is_callable($middleware)) {
+            $middleware($this->request, $this->response);
+        }
+    }
+
+    private function callHandler($handler, array $params): void
+    {
+        $controllerClass = '';
+        $method = '';
+
+        if (is_array($handler)) {
+            [$controllerClass, $method] = $handler;
+        } elseif (is_string($handler) && strpos($handler, '@') !== false) {
+            [$controllerClass, $method] = explode('@', $handler);
+        }
+
+        if (class_exists($controllerClass)) {
+            $controller = new $controllerClass();
             
-            // Controller method iruka nu check panni run panroam
-            if (method_exists($controller, $action)) {
-                return $controller->$action($request);
+            // Controller-ku merged Request matum Response-ai inject panroam.
+            if (method_exists($controller, 'setRequest')) {
+                $controller->setRequest($this->request);
+            }
+            if (method_exists($controller, 'setResponse')) {
+                $controller->setResponse($this->response);
+            }
+            
+            // Method exist-ah nu check panni execute panroam.
+            if (method_exists($controller, $method)) {
+                call_user_func_array([$controller, $method], [$this->request, ...array_values($params)]);
             } else {
-                Response::json([
-                    "error" => "Method '$action' not found in $controllerName"
-                ], 500);
+                $this->response->error("Method $method not found in $controllerClass", 500);
             }
         } else {
-            Response::json([
-                "error" => "Controller class '$controllerName' not found"
-            ], 500);
+            $this->response->error("Controller $controllerClass not found", 500);
         }
     }
 }

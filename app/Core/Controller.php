@@ -2,48 +2,119 @@
 
 namespace App\Core;
 
-class Controller {
-    
-    // Constructor: This runs automatically when any controller is called
+/**
+ * Base Controller: Solved Git Conflicts & Merged Features.
+ * Includes: Validation Engine, JWT Auth Helpers, and JSON Response Helpers.
+ */
+class Controller
+{
+    protected Request $request;
+    protected Response $response;
+
     public function __construct() {
-        // You can add shared logic here later (e.g., checking if user is logged in)
+        // Shared logic global-aa thevai-na inga add pannalaam
     }
 
-    // Optional Helper: If you want to use $this->json() instead of Response::json()
+    public function setRequest(Request $request): void
+    {
+        $this->request = $request;
+    }
+
+    public function setResponse(Response $response): void
+    {
+        $this->response = $response;
+    }
+
+    /**
+     * Optional Helper: Controller-la $this->json() nu easy-aa use panna
+     */
     protected function json($data, $code = 200) {
-        // Assuming you have the Response class in App\Core\Response
         Response::json($data, $code);
     }
-}
 
-//-----------------------------------------------------------// 
-
-use Closure;
-use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\Response;
-
-class RoleMiddleware
-{
     /**
-     * Handle an incoming request.
+     * Authenticated user data-vai JWT payload-la irundhu edukka
      */
-    public function handle(Request $request, Closure $next, ...$roles): Response
+    protected function getAuthUser(): ?array
     {
-        // 1. User login pannirukangala nu check panrom
-        if (!$request->user()) {
-            return response()->json(['message' => 'Unauthenticated. Login pannunga vro!'], 401);
+        // Namma merged request logic padi 'user' property-la data irukkum
+        return $this->request->user ?? $this->request->getAttribute('auth_user');
+    }
+
+    /**
+     * Role-based Access Check (Manual Check inside Controller if needed)
+     */
+    protected function checkRole(array $allowedRoles): bool
+    {
+        $user = $this->getAuthUser();
+        if (!$user || !isset($user['role_name'])) {
+            return false;
+        }
+        return in_array($user['role_name'], $allowedRoles);
+    }
+
+    /**
+     * Tenant ID-ai middleware attribute-la irundhu edukka
+     */
+    protected function getTenantId(): ?int
+    {
+        return $this->request->tenant_id ?? $this->request->getAttribute('tenant_id');
+    }
+
+    /**
+     * VALIDATION ENGINE:
+     * Manual-aa ovvoru if-else ezhudhama, rule-padi validate panna idhu best.
+     */
+    protected function validate(array $data, array $rules): array
+    {
+        $errors = [];
+
+        foreach ($rules as $field => $ruleString) {
+            $ruleList = explode('|', $ruleString);
+            $value = $data[$field] ?? null;
+
+            foreach ($ruleList as $rule) {
+                // 1. Required Check
+                if ($rule === 'required' && (is_null($value) || $value === '')) {
+                    $errors[$field][] = "{$field} is required.";
+                }
+
+                // 2. Email Validation
+                if ($rule === 'email' && $value && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                    $errors[$field][] = "{$field} must be a valid email.";
+                }
+
+                // 3. Minimum Length Check
+                if (strpos($rule, 'min:') === 0) {
+                    $min = (int) substr($rule, 4);
+                    if ($value && strlen($value) < $min) {
+                        $errors[$field][] = "{$field} must be at least {$min} characters.";
+                    }
+                }
+
+                // 4. Maximum Length Check
+                if (strpos($rule, 'max:') === 0) {
+                    $max = (int) substr($rule, 4);
+                    if ($value && strlen($value) > $max) {
+                        $errors[$field][] = "{$field} must not exceed {$max} characters.";
+                    }
+                }
+
+                // 5. Numeric Check
+                if ($rule === 'numeric' && $value && !is_numeric($value)) {
+                    $errors[$field][] = "{$field} must be numeric.";
+                }
+
+                // 6. Allowed Values Check (e.g., in:active,inactive)
+                if (strpos($rule, 'in:') === 0) {
+                    $allowed = explode(',', substr($rule, 3));
+                    if ($value && !in_array($value, $allowed)) {
+                        $errors[$field][] = "{$field} must be one of: " . implode(', ', $allowed);
+                    }
+                }
+            }
         }
 
-        // 2. User-oda role namma allow panna roles-la irukka nu check panrom
-        // Example: Controller-la 'role:admin,staff' nu kudutha, 
-        // intha array-la 'admin', 'staff' rendu perukum access kidaikkum.
-        if (!in_array($request->user()->role, $roles)) {
-            return response()->json([
-                'message' => 'Access Denied. Ungalukku intha action panna permission illa.',
-                'your_role' => $request->user()->role
-            ], 403);
-        }
-
-        return $next($request);
+        return $errors;
     }
 }

@@ -1,72 +1,135 @@
 <?php
+
 namespace App\Core;
 
-class Response {
-    public static function json($data, $code = 200) {
-        http_response_code($code);
-        header('Content-Type: application/json');
-        echo json_encode($data);
-        exit;
-    }
-}
+/**
+ * Response Class: Git conflict resolved and merged.
+ * Supports static calls for quick JSON and object methods for advanced headers/CORS/Cookies.
+ */
+class Response
+{
+    private int $statusCode = 200;
+    private array $headers = [];
+    private $body = null;
 
-
-//-----------------------------------------------------------// 
-
-class Response {
     /**
-     * Standard JSON Response Method
-     * * @param mixed $data - Anuppa vendiya data (Array or Object)
-     * @param int $code - HTTP Status Code (Default 200)
+     * STATIC HELPER: 
+     * Unga previous code break aagaama irukka direct-aa Response::json() call pannalaam.
+     * Merged logic: Automatically adds status (success/error) and CORS.
      */
     public static function json($data, $code = 200) {
-        // 1. HTTP Status Code-ah set panroam (e.g., 200, 401, 403, 404, 500)
-        http_response_code($code);
+        $instance = new self();
+        $instance->setStatusCode($code);
+        $instance->setHeader('Content-Type', 'application/json; charset=utf-8');
+        
+        // CORS basic headers added automatically for compatibility (Postman/React/Mobile)
+        $instance->setCorsHeaders();
 
-        // 2. Browser/Client-ku idhu oru JSON response-nu solroam
-        header('Content-Type: application/json');
-
-        // 3. CORS Settings (Optional: Frontend connect panna use aagum)
-        header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-        header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
-
-        // 4. Data structure-ah standardize panroam
+        // Standardize data structure (Merged from HEAD requirement)
         $response = [];
+        $response['status'] = ($code >= 200 && $code < 300) ? 'success' : 'error';
+        
+        // Merge input data with status
+        $finalData = array_merge($response, (array)$data);
 
-        if ($code >= 200 && $code < 300) {
-            $response['status'] = 'success';
-        } else {
-            $response['status'] = 'error';
+        http_response_code($code);
+        foreach ($instance->headers as $name => $value) {
+            header("$name: $value");
+        }
+        
+        echo json_encode($finalData, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    public function setStatusCode(int $code): self
+    {
+        $this->statusCode = $code;
+        return $this;
+    }
+
+    public function setHeader(string $name, string $value): self
+    {
+        $this->headers[$name] = $value;
+        return $this;
+    }
+
+    /**
+     * CORS CONFIG: 
+     * Frontend (React/Vue/Angular) kooda connect panna idhu romba mukkiam.
+     */
+    public function setCorsHeaders(): self
+    {
+        $this->setHeader('Access-Control-Allow-Origin', '*'); 
+        $this->setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+        $this->setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+        return $this;
+    }
+
+    /**
+     * SUCCESS HELPER: 
+     * Intha project-la Module 3 & 4-ku standard success format-ah use pannalaam.
+     */
+    public static function success($message, $data = [], $code = 200): void
+    {
+        self::json([
+            'message' => $message,
+            'data' => $data,
+        ], $code);
+    }
+
+    /**
+     * ERROR HELPER: 
+     * Standard error response with optional validation error array.
+     */
+    public static function error($message = 'Error', int $code = 400, array $errors = []): void
+    {
+        $payload = [
+            'message' => $message,
+        ];
+
+        if (!empty($errors)) {
+            $payload['errors'] = $errors;
         }
 
-        // 5. Raw data-vai response array kooda merge panroam
-        $response = array_merge($response, (array)$data);
-
-        // 6. JSON-ah encode panni print panroam
-        echo json_encode($response);
-        
-        // 7. Execution-ah stop panroam
-        exit;
+        self::json($payload, $code);
     }
 
     /**
-     * Simple Success Message Helper
+     * COOKIE HELPER: 
+     * Secure-ah cookies set panna idhu use aagum.
      */
-    public static function success($message, $data = [], $code = 200) {
-        self::json([
-            'message' => $message,
-            'data' => $data
-        ], $code);
+    public function setCookie(
+        string $name,
+        string $value,
+        int $expires = 0,
+        string $path = '/',
+        string $domain = '',
+        bool $secure = false,
+        bool $httponly = true,
+        string $samesite = 'Strict'
+    ): self {
+        setcookie($name, $value, [
+            'expires' => $expires,
+            'path' => $path,
+            'domain' => $domain,
+            'secure' => $secure,
+            'httponly' => $httponly,
+            'samesite' => $samesite,
+        ]);
+        return $this;
     }
 
     /**
-     * Simple Error Message Helper
+     * Standard send method for non-static usage.
      */
-    public static function error($message, $code = 400, $errors = []) {
-        self::json([
-            'message' => $message,
-            'errors' => $errors
-        ], $code);
+    public function send(): void
+    {
+        http_response_code($this->statusCode);
+        foreach ($this->headers as $name => $value) {
+            header("$name: $value");
+        }
+        if ($this->body !== null) {
+            echo $this->body;
+        }
     }
 }

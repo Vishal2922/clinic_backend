@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Modules\Prescriptions\Models;
 
 use App\Core\Database;
@@ -8,49 +9,82 @@ class Prescription {
     private $db;
 
     public function __construct() {
-        $database = new Database();
-        $this->db = $database->getConnection();
+        /**
+         * 🔥 FIX: Merged Singleton Logic
+         * 'new' keyword use pannama Core Database-oda static instance-ah use panrom.
+         */
+        $this->db = Database::getInstance();
     }
 
+    /**
+     * CREATE PRESCRIPTION
+     * Controller-la encrypt aana data-vai DB-la save pannum.
+     */
     public function create($data) {
-        // Teammate structure padi tenant_id and provider_id (user_id) store aagum
-        $sql = "INSERT INTO prescriptions (tenant_id, appointment_id, patient_id, provider_id, medicines, notes, status) 
-                VALUES (:tenant_id, :appointment_id, :patient_id, :provider_id, :medicines, :notes, 'pending')";
+        /**
+         * Namma merge panna Database::insert() method use panrom.
+         * Ithu automatic-ah prepare panni, execute panni, Last Insert ID-ah return pannum.
+         */
+        $sql = "INSERT INTO prescriptions (
+                    tenant_id, 
+                    appointment_id, 
+                    patient_id, 
+                    provider_id, 
+                    medicine_name, 
+                    dosage, 
+                    notes, 
+                    status
+                ) VALUES (
+                    :tenant_id, 
+                    :appointment_id, 
+                    :patient_id, 
+                    :provider_id, 
+                    :medicine_name, 
+                    :dosage, 
+                    :notes, 
+                    'pending'
+                )";
         
-        $stmt = $this->db->prepare($sql);
-        
-        $stmt->execute([
+        return $this->db->insert($sql, [
             ':tenant_id'      => $data['tenant_id'],
             ':appointment_id' => $data['appointment_id'],
             ':patient_id'     => $data['patient_id'],
             ':provider_id'    => $data['provider_id'],
-            ':medicines'      => $data['medicines'], // Encrypted String
+            ':medicine_name'  => $data['medicine_name'], // AES Encrypted
+            ':dosage'         => $data['dosage'],        // AES Encrypted
             ':notes'          => $data['notes'] ?? null
         ]);
-        
-        return $this->db->lastInsertId();
     }
 
+    /**
+     * FIND BY ID (Multi-tenancy Secured)
+     */
     public function findById($id, $tenant_id) {
-        // Multi-tenancy check: User-oda tenant_id match aaganaum
-        $stmt = $this->db->prepare("SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id");
-        $stmt->execute([':id' => $id, ':tenant_id' => $tenant_id]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        // Core Database::fetch() method-ah use panrom (SQL injection protection)
+        $sql = "SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id";
+        return $this->db->fetch($sql, [
+            ':id' => $id, 
+            ':tenant_id' => $tenant_id
+        ]);
     }
 
-    // Role-based update logic: Pharmacist dispense pannumbothu avaroda ID-yum save aagum
-    public function updateStatus($id, $tenant_id, $status, $pharmacist_id = null) {
+    /**
+     * ROLE-BASED UPDATE (Provider or Pharmacist)
+     * Pharmacist dispense pannumbothu avaroda ID track aagum.
+     */
+    public function updateStatus($id, $tenant_id, $updateData) {
         $sql = "UPDATE prescriptions SET 
                 status = :status, 
                 pharmacist_id = :pharmacist_id,
+                dosage = :dosage,
                 updated_at = CURRENT_TIMESTAMP 
                 WHERE id = :id AND tenant_id = :tenant_id";
         
-        $stmt = $this->db->prepare($sql);
-        
-        return $stmt->execute([
-            ':status'        => $status,
-            ':pharmacist_id' => $pharmacist_id, // Who dispensed it
+        // Core Database::execute() method use panni affected rows count-ah return pannum
+        return $this->db->execute($sql, [
+            ':status'        => $updateData['status'],
+            ':pharmacist_id' => $updateData['pharmacist_id'] ?? null,
+            ':dosage'        => $updateData['dosage'] ?? null, // Encrypted if updated
             ':id'            => $id,
             ':tenant_id'     => $tenant_id
         ]);

@@ -1,167 +1,115 @@
 <?php
+
 namespace App\Modules\Prescriptions\Controllers;
 
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Security\CryptoService;
 use App\Modules\Prescriptions\Services\PrescriptionService;
 
 class PrescriptionController extends Controller {
     private $service;
+    private $crypto;
 
     public function __construct() {
+        // Services-ah initialize panroam
         $this->service = new PrescriptionService();
+        $this->crypto  = new CryptoService();
     }
 
     /**
-     * AUDIT LOG HELPER
+     * AUDIT LOG HELPER: Security compliance-kaaga ella sensitive actions-aiyum log pannum.
      */
     private function logActivity($userId, $tenantId, $action, $details) {
-        $logData = [
-            'user_id' => $userId,
-            'tenant_id' => $tenantId,
-            'action' => $action,
-            'details' => $this->encryptData($details),
-            'timestamp' => date('Y-m-d H:i:s')
-        ];
-        // Example: $this->service->saveAuditLog($logData);
+        // Common helper function (app/Helpers/functions.php-la irukkum)
+        if (function_exists('app_log')) {
+            app_log("[AUDIT] user_id={$userId} tenant_id={$tenantId} action={$action} details={$details}");
+        }
     }
 
     /**
-     * AES ENCRYPTION HELPERS
+     * POST /api/prescriptions
+     * Role: Provider mattum thaan prescription create panna mudiyum.
      */
-    private function encryptData($data) {
-        $encryption_key = $_ENV['APP_KEY'] ?? null; 
-        $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
-        $encrypted = openssl_encrypt($data, 'aes-256-cbc', $encryption_key, 0, $iv);
-        return base64_encode($encrypted . '::' . $iv);
-    }
-
-    private function decryptData($data) {
-        $encryption_key = $_ENV['APP_KEY'] ?? null;
-        list($encrypted_data, $iv) = explode('::', base64_decode($data), 2);
-        return openssl_decrypt($encrypted_data, 'aes-256-cbc', $encryption_key, 0, $iv);
-    }
-
-    /**
-     * JWT VALIDATOR: With Strict Header Check, Expiry, and Role Match.
-     */
-    private function getValidatedUser($requiredRoles) {
-        $headers = getallheaders();
-        
-        // 1. SCENARIO: Header-la token-ae illa-naal (Unga requirement)
-        if (!isset($headers['Authorization']) || empty($headers['Authorization'])) {
-            Response::json([
-                'status' => 'error', 
-                'message' => 'Authorization header is missing. Access denied.' 
-            ], 401);
-            exit();
-        }
-
-        $authHeader = $headers['Authorization'];
-        
-        // 2. Format check (Bearer token structure)
-        if (!preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
-            Response::json([
-                'status' => 'error', 
-                'message' => 'Invalid Authorization format. Use: Bearer <token>'
-            ], 401);
-            exit();
-        }
-
-        $token = $matches[1];
-        $parts = explode('.', $token);
-
-        if (count($parts) !== 3) {
-            Response::json(['status' => 'error', 'message' => 'Invalid token structure'], 401);
-            exit();
-        }
-
-        list($header, $payload, $signature) = $parts;
-
-        $secretKey = $_ENV['JWT_SECRET'] ?? null;
-        if (!$secretKey) {
-            Response::json(['status' => 'error', 'message' => 'System error: JWT_SECRET not found'], 500);
-            exit();
-        }
-
-        // 3. Signature Verification
-        $validSignature = hash_hmac('sha256', "$header.$payload", $secretKey, true);
-        $base64Signature = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($validSignature));
-
-        if ($signature !== $base64Signature) {
-            Response::json(['status' => 'error', 'message' => 'Unauthorized: Signature mismatch'], 401);
-            exit();
-        }
-
-        $decodedData = json_decode(base64_decode(str_replace(['-', '_'], ['+', '/'], $payload)));
-
-        // 4. EXPIRATION CHECK
-        if (isset($decodedData->exp) && $decodedData->exp < time()) {
-            Response::json([
-                'status' => 'error', 
-                'message' => 'Token Expired: Please login again'
-            ], 401);
-            exit();
-        }
-
-        $roles = is_array($requiredRoles) ? $requiredRoles : [$requiredRoles];
-        
-        if (!isset($decodedData->role) || !in_array($decodedData->role, $roles)) {
-            Response::json(['status' => 'error', 'message' => 'Access Denied: Required role missing'], 403);
-            exit();
-        }
-
-        return $decodedData;
-    }
-
-    // Prescription Create API
     public function store(Request $request) {
-        $user = $this->getValidatedUser('Provider'); 
-        $data = $request->getBody();
+        // Base Controller helpers vachi Auth user matum Tenant ID edukkurom
+        $authUser = $this->getAuthUser();
+        $tenantId = $this->getTenantId();
+        $data     = $request->getBody();
 
-        // BODY DATA VALIDATION
+        // 1. Validation Logic
         $errors = [];
         if (empty($data['patient_id'])) $errors[] = "Patient ID is required.";
-        if (empty($data['medicine_name']) || strlen($data['medicine_name']) < 3) $errors[] = "Valid Medicine Name is required.";
+        if (empty($data['medicine_name']) || strlen($data['medicine_name']) < 3) {
+            $errors[] = "Valid Medicine Name is required (min 3 chars).";
+        }
         if (empty($data['dosage'])) $errors[] = "Dosage instructions are required.";
-        
+
         if (!empty($errors)) {
-            Response::json(['status' => 'error', 'message' => 'Validation Failed', 'errors' => $errors], 422);
-            exit();
+            // Merged Response helper use panroam
+            return Response::json(['status' => 'error', 'message' => 'Validation Failed', 'errors' => $errors], 422);
         }
 
-        // AES ENCRYPTION
-        $data['medicine_name'] = $this->encryptData($data['medicine_name']);
-        $data['dosage'] = $this->encryptData($data['dosage']);
+        // 2. AES ENCRYPTION: Sensitive fields-ah database-ku poradhukku munnadi encrypt panroam
+        // CryptoService openSSL aes-256-cbc logic-ah handle pannum
+        $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
+        $data['dosage']        = $this->crypto->encrypt($data['dosage']);
 
-        $data['tenant_id'] = $request->tenant_id; 
-        $data['provider_id'] = $user->user_id;
+        // 3. Inject Metadata
+        $data['tenant_id']   = $tenantId;
+        $data['provider_id'] = $authUser['user_id'];
 
         try {
             $id = $this->service->createPrescription($data);
-            $this->logActivity($user->user_id, $request->tenant_id, 'CREATE_PRESCRIPTION', "Prescription ID $id created.");
 
-            Response::json(['status' => 'success', 'id' => $id, 'message' => 'Validated, Encrypted and Logged'], 201);
+            // Audit log create panroam
+            $this->logActivity($authUser['user_id'], $tenantId, 'CREATE_PRESCRIPTION', "Prescription ID {$id} created.");
+
+            Response::json([
+                'status' => 'success', 
+                'id' => $id, 
+                'message' => 'Prescription encrypted and saved successfully'
+            ], 201);
         } catch (\Exception $e) {
-            Response::json(['status' => 'error', 'message' => $e->getMessage()], 500);
+            Response::json(['status' => 'error', 'message' => 'Failed to create prescription: ' . $e->getMessage()], 500);
         }
     }
 
-    // Prescription Update API
-    public function update(Request $request) {
-        $user = $this->getValidatedUser(['Provider', 'Pharmacist']);
-        $data = $request->getBody();
+    /**
+     * PUT /api/prescriptions/{id}
+     * Role: Provider or Pharmacist can update.
+     */
+    public function update(Request $request, string $id) {
+        $authUser = $this->getAuthUser();
+        $tenantId = $this->getTenantId();
+        $data     = $request->getBody();
 
+        if (empty($id)) {
+            return Response::json(['status' => 'error', 'message' => 'Prescription ID is required.'], 400);
+        }
+
+        // Encrypt sensitive fields if they are provided in the update
         if (!empty($data['dosage'])) {
-            $data['dosage'] = $this->encryptData($data['dosage']);
+            $data['dosage'] = $this->crypto->encrypt($data['dosage']);
+        }
+        if (!empty($data['medicine_name'])) {
+            $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
         }
 
         try {
-            $this->service->update($data['id'], $request->tenant_id, $data, $user->user_id, $user->role);
-            $this->logActivity($user->user_id, $request->tenant_id, 'UPDATE_PRESCRIPTION', "Prescription ID " . $data['id'] . " updated.");
+            // Service level update logic with Role-based constraints
+            $this->service->update(
+                $id,
+                $tenantId,
+                $data,
+                $authUser['user_id'],
+                $authUser['role_name']
+            );
 
-            Response::json(['status' => 'success', 'message' => 'Prescription updated and logged']);
+            $this->logActivity($authUser['user_id'], $tenantId, 'UPDATE_PRESCRIPTION', "Prescription ID {$id} updated.");
+
+            Response::json(['status' => 'success', 'message' => 'Prescription updated successfully']);
         } catch (\Exception $e) {
             Response::json(['status' => 'error', 'message' => 'Update failed: ' . $e->getMessage()], 500);
         }
