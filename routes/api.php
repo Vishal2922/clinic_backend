@@ -92,3 +92,52 @@ $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $aut
 $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
     $router->get('/stats',  [DashboardController::class, 'index'], [$staff]);
 });
+
+// ═══════════════════════════════════════════════════════════
+//  MODULE 7: COMMUNICATION (Notes & Messages)
+//  Roles: Provider, Nurse
+// ═══════════════════════════════════════════════════════════
+use App\Modules\Communication\Controllers\NoteController;
+$providerNurse = AuthorizeRole::class . ':Provider,Nurse';
+
+$router->group(['prefix' => '/api/communication', 'middleware' => [$tenant, $auth, $providerNurse]], function ($router) use ($csrf) {
+    // Get notes for an appointment (role-visibility filtered + decrypted)
+    $router->get('/appointments/{id}/notes',          [NoteController::class, 'index']);
+
+    // Create a new encrypted note for an appointment
+    $router->post('/appointments/{id}/notes',         [NoteController::class, 'store'],   [$csrf]);
+
+    // Paginated message history for an appointment
+    $router->get('/appointments/{id}/notes/history',  [NoteController::class, 'history']);
+
+    // Soft-delete a note (author only)
+    $router->delete('/notes/{id}',                    [NoteController::class, 'destroy']);
+});
+
+// ═══════════════════════════════════════════════════════════
+//  MODULE 8: BILLING & PAYMENTS
+//  Admin: full access | Provider: create+update | Patient: view own+pay
+// ═══════════════════════════════════════════════════════════
+use App\Modules\Billing\Controllers\InvoiceController;
+$billingStaff = AuthorizeRole::class . ':Admin,Provider';
+$billingAll   = AuthorizeRole::class . ':Admin,Provider,Patient';
+
+$router->group(['prefix' => '/api/billing', 'middleware' => [$tenant, $auth]], function ($router) use ($billingStaff, $billingAll, $adminOnly, $csrf) {
+    // Billing summary totals (Admin + Provider)
+    $router->get('/summary',                [InvoiceController::class, 'summary'],      [$billingStaff]);
+
+    // List invoices — patients auto-filtered to own
+    $router->get('/invoices',               [InvoiceController::class, 'index'],        [$billingAll]);
+
+    // Single invoice — patients can only view own
+    $router->get('/invoices/{id}',          [InvoiceController::class, 'show'],         [$billingAll]);
+
+    // Generate invoice (Admin + Provider)
+    $router->post('/invoices',              [InvoiceController::class, 'store'],        [$billingStaff, $csrf]);
+
+    // Update payment status (all roles, restricted by role-transition rules)
+    $router->patch('/invoices/{id}/status', [InvoiceController::class, 'updateStatus'], [$billingAll, $csrf]);
+
+    // Delete invoice (Admin only)
+    $router->delete('/invoices/{id}',       [InvoiceController::class, 'destroy'],      [$adminOnly]);
+});
