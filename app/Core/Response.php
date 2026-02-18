@@ -17,7 +17,8 @@ class Response
      * Unga previous code break aagaama irukka direct-aa Response::json() call pannalaam.
      * Merged logic: Automatically adds status (success/error) and CORS.
      */
-    public static function json($data, $code = 200) {
+    public static function json($data, $code = 200): void
+    {
         $instance = new self();
         $instance->setStatusCode($code);
         $instance->setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -25,20 +26,53 @@ class Response
         // CORS basic headers added automatically for compatibility (Postman/React/Mobile)
         $instance->setCorsHeaders();
 
-        // Standardize data structure (Merged from HEAD requirement)
-        $response = [];
-        $response['status'] = ($code >= 200 && $code < 300) ? 'success' : 'error';
+        // Standardize data structure
+        $status = ($code >= 200 && $code < 300) ? 'success' : 'error';
         
-        // Merge input data with status
-        $finalData = array_merge($response, (array)$data);
+        // Prepare final payload: if data is already an array, merge; otherwise, wrap it.
+        $payload = ['status' => $status];
+        if (is_array($data)) {
+            $payload = array_merge($payload, $data);
+        } else {
+            $payload['data'] = $data;
+        }
 
         http_response_code($code);
         foreach ($instance->headers as $name => $value) {
             header("$name: $value");
         }
         
-        echo json_encode($finalData, JSON_UNESCAPED_UNICODE);
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE);
         exit;
+    }
+
+    /**
+     * SUCCESS HELPER: 
+     * Standard success format used across the project.
+     */
+    public static function success($message, $data = [], $code = 200): void
+    {
+        self::json([
+            'message' => $message,
+            'data' => $data,
+        ], $code);
+    }
+
+    /**
+     * ERROR HELPER: 
+     * Standard error response with optional validation error details.
+     */
+    public static function error($message = 'Error', int $code = 400, array $errors = []): void
+    {
+        $payload = [
+            'message' => $message,
+        ];
+
+        if (!empty($errors)) {
+            $payload['errors'] = $errors;
+        }
+
+        self::json($payload, $code);
     }
 
     public function setStatusCode(int $code): self
@@ -63,35 +97,6 @@ class Response
         $this->setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
         $this->setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
         return $this;
-    }
-
-    /**
-     * SUCCESS HELPER: 
-     * Intha project-la Module 3 & 4-ku standard success format-ah use pannalaam.
-     */
-    public static function success($message, $data = [], $code = 200): void
-    {
-        self::json([
-            'message' => $message,
-            'data' => $data,
-        ], $code);
-    }
-
-    /**
-     * ERROR HELPER: 
-     * Standard error response with optional validation error array.
-     */
-    public static function error($message = 'Error', int $code = 400, array $errors = []): void
-    {
-        $payload = [
-            'message' => $message,
-        ];
-
-        if (!empty($errors)) {
-            $payload['errors'] = $errors;
-        }
-
-        self::json($payload, $code);
     }
 
     /**
@@ -129,7 +134,7 @@ class Response
             header("$name: $value");
         }
         if ($this->body !== null) {
-            echo $this->body;
+            echo is_array($this->body) ? json_encode($this->body) : $this->body;
         }
     }
 }

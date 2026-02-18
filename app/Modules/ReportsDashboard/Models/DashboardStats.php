@@ -43,7 +43,7 @@ class DashboardStats {
          */
         return $this->db->fetch($sql, [
             't1' => $tenant_id, 
-            't2' => $tenant_id,
+            't2' => $tenant_id, 
             't3' => $tenant_id
         ]);
     }

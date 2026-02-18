@@ -1,35 +1,36 @@
 # 1. Enable Rewrite Engine
 RewriteEngine On
 
-# 2. Redirect to index.php
-# Existing files (!-f) or directories (!-d) illana mattum index.php-ku route pannum.
-# HEAD version logic and teammate's version are merged for maximum compatibility.
-
+# 2. Redirect to index.php (Standard Routing)
+# If the requested filename is not an existing file (!-f) or directory (!-d),
+# route the request to index.php. This enables clean URLs like /api/prescriptions.
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.*)$ index.php [QSA,L]
 
-# 3. Security Headers (Teammate's addition - Highly Recommended)
-# Healthcare data security-kaaga intha headers browser level-la protect pannum.
+# 3. Security Headers
+# These headers provide browser-level protection for sensitive healthcare data.
+[Image of web application security headers architecture]
 <IfModule mod_headers.c>
-    # Prevent MIME type sniffing (Prevents browsers from guessing file types)
+    # Prevent MIME type sniffing (Prevents browsers from "guessing" file types)
     Header always set X-Content-Type-Options "nosniff"
     
-    # Anti-Clickjacking (Prevents your site from being rendered in an iframe)
+    # Anti-Clickjacking (Prevents the site from being rendered in an iframe)
     Header always set X-Frame-Options "DENY"
     
-    # Enable XSS filtering (Cross-site scripting protection for browsers)
+    # Enable XSS filtering (Cross-site scripting protection)
     Header always set X-XSS-Protection "1; mode=block"
     
-    # Strict-Transport-Security (HTTPS force panna - production-ku use aagum)
-    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    # Referrer-Policy (Controls how much info is sent when navigating away)
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
 # 4. Privacy & Access Protection
-# Folder ulla enna files irukunu outsiders paakka mudiyaadhu.
+# Disable directory listing (Outsiders cannot see a list of your files)
 Options -Indexes
 
-# Sensitive files-ah hide pannum (.env, logs, etc.)
+# 5. Deny Access to Sensitive Files
+# This block ensures that config, environment, and log files are never accessible via URL.
 <FilesMatch "^\.env|composer\.(json|lock)|package(-lock)?\.json$|^.*\.log$">
     Require all denied
 </FilesMatch>

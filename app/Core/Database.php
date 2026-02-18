@@ -13,23 +13,22 @@ use RuntimeException;
 class Database
 {
     private static ?Database $instance = null;
-    private PDO $pdo;
+    private ?PDO $pdo = null;
 
-    // Teammate logic base panni, settings-ah class properties-ah merge pannirukkoam
-    private $host = "127.0.0.1";
-    private $port = "3308";           
-    private $db_name = "clinic_db";
-    private $username = "root";
-    private $password = ""; 
+    // Database connection settings
+    private string $host = "127.0.0.1";
+    private string $port = "3308";           
+    private string $db_name = "clinic_db";
+    private string $username = "root";
+    private string $password = ""; 
 
     /**
      * Private constructor to prevent multiple instances.
-     * Logic merged from both versions to support dynamic or default config.
+     * Priority: $config array > Class Properties.
      */
     private function __construct(array $config = [])
     {
         try {
-            // Priority: $config array > Class Properties
             $h = $config['host'] ?? $this->host;
             $p = $config['port'] ?? $this->port;
             $db = $config['database'] ?? $this->db_name;
@@ -52,8 +51,11 @@ class Database
         } catch (PDOException $e) {
             error_log('Database connection failed: ' . $e->getMessage());
             
-            http_response_code(500);
-            header('Content-Type: application/json');
+            if (!headers_sent()) {
+                http_response_code(500);
+                header('Content-Type: application/json');
+            }
+            
             echo json_encode([
                 "status" => "error",
                 "message" => "Database Connection Failed. Please check server logs."
@@ -68,7 +70,7 @@ class Database
     public static function getInstance(array $config = []): self
     {
         if (self::$instance === null) {
-            // Default config path check (from teammate version)
+            // Check for a config file if no config is passed
             if (empty($config) && defined('BASE_PATH')) {
                 $configFile = BASE_PATH . '/config/database.php';
                 $config = file_exists($configFile) ? require $configFile : [];
@@ -79,7 +81,8 @@ class Database
     }
 
     /**
-     * Get the raw PDO connection (For teammate's original getConnection requirement)
+     * Get the raw PDO connection.
+     * Useful for legacy code or specific PDO requirements.
      */
     public function getConnection(): PDO
     {
@@ -138,7 +141,9 @@ class Database
     public function commit(): bool { return $this->pdo->commit(); }
     public function rollBack(): bool { return $this->pdo->rollBack(); }
 
-    // Prevent cloning and unserializing
+    // Prevent cloning and unserializing to maintain Singleton integrity
     private function __clone() {}
-    public function __wakeup() { throw new RuntimeException("Cannot unserialize singleton"); }
+    public function __wakeup() { 
+        throw new RuntimeException("Cannot unserialize singleton"); 
+    }
 }

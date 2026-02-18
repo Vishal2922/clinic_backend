@@ -6,12 +6,13 @@ use App\Core\Database;
 use PDO;
 
 class Prescription {
-    private $db;
+    private Database $db;
 
     public function __construct() {
         /**
          * 🔥 FIX: Merged Singleton Logic
          * 'new' keyword use pannama Core Database-oda static instance-ah use panrom.
+         * Ithu connection pooling-ah avoid panni performance-ah optimize pannum.
          */
         $this->db = Database::getInstance();
     }
@@ -20,7 +21,7 @@ class Prescription {
      * CREATE PRESCRIPTION
      * Controller-la encrypt aana data-vai DB-la save pannum.
      */
-    public function create($data) {
+    public function create(array $data) {
         /**
          * Namma merge panna Database::insert() method use panrom.
          * Ithu automatic-ah prepare panni, execute panni, Last Insert ID-ah return pannum.
@@ -50,17 +51,18 @@ class Prescription {
             ':appointment_id' => $data['appointment_id'],
             ':patient_id'     => $data['patient_id'],
             ':provider_id'    => $data['provider_id'],
-            ':medicine_name'  => $data['medicine_name'], // AES Encrypted
-            ':dosage'         => $data['dosage'],        // AES Encrypted
+            ':medicine_name'  => $data['medicine_name'], // Expected to be AES Encrypted
+            ':dosage'         => $data['dosage'],        // Expected to be AES Encrypted
             ':notes'          => $data['notes'] ?? null
         ]);
     }
 
     /**
      * FIND BY ID (Multi-tenancy Secured)
+     * Tenant ID check illama endha data-vaiyum fetch panna koodathu.
      */
-    public function findById($id, $tenant_id) {
-        // Core Database::fetch() method-ah use panrom (SQL injection protection)
+    public function findById($id, $tenant_id): ?array {
+        // Core Database::fetch() method-ah use panrom (Standardized SQL injection protection)
         $sql = "SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id";
         return $this->db->fetch($sql, [
             ':id' => $id, 
@@ -70,9 +72,13 @@ class Prescription {
 
     /**
      * ROLE-BASED UPDATE (Provider or Pharmacist)
-     * Pharmacist dispense pannumbothu avaroda ID track aagum.
+     * Pharmacist dispense pannumbothu status 'completed' aagum and avaroda ID track aagum.
      */
-    public function updateStatus($id, $tenant_id, $updateData) {
+    public function updateStatus($id, $tenant_id, array $updateData) {
+        /**
+         * Logic merged: We support updating status, pharmacist_id (auditing), 
+         * and even dosage (in case of clinical adjustments).
+         */
         $sql = "UPDATE prescriptions SET 
                 status = :status, 
                 pharmacist_id = :pharmacist_id,
@@ -80,13 +86,22 @@ class Prescription {
                 updated_at = CURRENT_TIMESTAMP 
                 WHERE id = :id AND tenant_id = :tenant_id";
         
-        // Core Database::execute() method use panni affected rows count-ah return pannum
+        // Core Database::execute() return pannum affected rows count-ah
         return $this->db->execute($sql, [
             ':status'        => $updateData['status'],
             ':pharmacist_id' => $updateData['pharmacist_id'] ?? null,
-            ':dosage'        => $updateData['dosage'] ?? null, // Encrypted if updated
+            ':dosage'        => $updateData['dosage'] ?? null, 
             ':id'            => $id,
             ':tenant_id'     => $tenant_id
         ]);
+    }
+
+    /**
+     * FETCH ALL FOR TENANT
+     * List view-kaaga tenant specific data fetch panna.
+     */
+    public function getAllByTenant($tenant_id): array {
+        $sql = "SELECT * FROM prescriptions WHERE tenant_id = :tenant_id ORDER BY created_at DESC";
+        return $this->db->fetchAll($sql, [':tenant_id' => $tenant_id]);
     }
 }

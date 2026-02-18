@@ -21,7 +21,7 @@ class Router
     }
 
     /**
-     * Group routes: Common prefix matum middleware sethu register panna idhu use aagum.
+     * Group routes: Common prefix and middleware grouping.
      */
     public function group(array $options, callable $callback): void
     {
@@ -41,7 +41,7 @@ class Router
         $this->currentGroupMiddleware = $previousMiddleware;
     }
 
-    // Standard Route Registration Methods (Merged from all versions)
+    // Standard Route Registration Methods
     public function get(string $path, $handler, array $middleware = []): void { $this->addRoute('GET', $path, $handler, $middleware); }
     public function post(string $path, $handler, array $middleware = []): void { $this->addRoute('POST', $path, $handler, $middleware); }
     public function put(string $path, $handler, array $middleware = []): void { $this->addRoute('PUT', $path, $handler, $middleware); }
@@ -53,9 +53,8 @@ class Router
      */
     private function addRoute(string $method, string $path, $handler, array $middleware): void
     {
-        // Standardize path: prefixes merge panni clean slash set pannum.
+        // Clean and merge prefixes
         $fullPath = '/' . ltrim($this->currentPrefix . '/' . ltrim($path, '/'), '/');
-        // Group middleware + Route level middleware merge pannum.
         $allMiddleware = array_merge($this->currentGroupMiddleware, $middleware);
 
         $this->routes[] = [
@@ -67,7 +66,7 @@ class Router
     }
 
     /**
-     * Dispatch: Request-ku match aagura route-ai kandupidi panni execute pannum.
+     * Dispatch: Find and execute the matching route.
      */
     public function resolve(): void
     {
@@ -93,15 +92,15 @@ class Router
             }
         }
 
-        // 404 Error: Merged response helper use panni standard output kudukkum.
-        $this->response->error('Route not found vro!', 404, [
+        // 404 Error using standardized Response helper
+        $this->response->error('Route not found!', 404, [
             'method' => $requestMethod,
             'path' => $requestUri
         ]);
     }
 
     /**
-     * Match route: /patients/{id} maadhiri dynamic parameters-ai extract pannum.
+     * Match route: Extract dynamic parameters like {id}.
      */
     private function matchRoute(string $routePath, string $uri)
     {
@@ -118,6 +117,9 @@ class Router
         return false;
     }
 
+    /**
+     * Execute Middleware (Supports Class names or Closures)
+     */
     private function runMiddleware($middleware): void
     {
         if (is_string($middleware)) {
@@ -134,6 +136,9 @@ class Router
         }
     }
 
+    /**
+     * Instantiate Controller and call the specific Action.
+     */
     private function callHandler($handler, array $params): void
     {
         $controllerClass = '';
@@ -148,7 +153,7 @@ class Router
         if (class_exists($controllerClass)) {
             $controller = new $controllerClass();
             
-            // Controller-ku merged Request matum Response-ai inject panroam.
+            // Inject Request and Response into the Controller
             if (method_exists($controller, 'setRequest')) {
                 $controller->setRequest($this->request);
             }
@@ -156,8 +161,8 @@ class Router
                 $controller->setResponse($this->response);
             }
             
-            // Method exist-ah nu check panni execute panroam.
             if (method_exists($controller, $method)) {
+                // Pass Request as first argument, then any dynamic URL params
                 call_user_func_array([$controller, $method], [$this->request, ...array_values($params)]);
             } else {
                 $this->response->error("Method $method not found in $controllerClass", 500);

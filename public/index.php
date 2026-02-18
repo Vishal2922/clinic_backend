@@ -14,7 +14,7 @@ error_reporting(E_ALL);
 define('BASE_PATH', dirname(__DIR__));
 
 // 3. Merged Autoloader (PSR-4 Style)
-// Rendu side logic-ayum standard PSR-4 format-la merge panniyachu.
+// Maps the "App\" namespace to the "/app" directory.
 spl_autoload_register(function ($class) {
     $prefix = 'App\\';
     $baseDir = BASE_PATH . '/app/';
@@ -32,6 +32,8 @@ spl_autoload_register(function ($class) {
     }
 });
 
+
+
 // 4. Global Helpers & Environment Setup
 if (file_exists(BASE_PATH . '/app/Helpers/functions.php')) {
     require_once BASE_PATH . '/app/Helpers/functions.php';
@@ -44,8 +46,6 @@ if (class_exists('\App\Helpers\EnvLoader')) {
 // Security matum CSRF logic-kaaga session start pannurohm
 session_start();
 
-[Image of PHP application bootstrap process flow]
-
 // 5. Initialize Core Services
 try {
     // Database Singleton Instance (Using merged Database class)
@@ -56,15 +56,15 @@ try {
     $response = new \App\Core\Response();
 
     // 6. Handle CORS & Preflight (Frontend integration-ku idhu mukkiam)
-    $response->setCorsHeaders();
     if ($request->getMethod() === 'options') {
+        $response->setCorsHeaders();
         $response->setStatusCode(200);
         $response->send();
         exit;
     }
 
     // 7. Initialize & Load Router
-    // Teammate logic padi Request matum Response objects-ah inject panroam
+    // Request matum Response objects-ah inject panroam for dependency injection
     $router = new \App\Core\Router($request, $response);
 
     // 8. Load Routes (api.php-la irukkura $router-ah use pannum)
@@ -73,12 +73,7 @@ try {
     }
 
     // 9. Dispatch (Match routes and execute controllers)
-    // resolve() or dispatch() - router merged version-ah poruthu call aagum
-    if (method_exists($router, 'dispatch')) {
-        $router->dispatch();
-    } else {
-        $router->resolve();
-    }
+    $router->resolve();
 
 } catch (\Exception $e) {
     // Global Error Handling: Standardized JSON output

@@ -28,13 +28,12 @@ class Request
         $this->queryParams = $_GET;
         $this->body = $this->parseBody();
         
-        // Logic merged from both versions:
-        // First, try to extract user from JWT. If not, set default/testing user.
+        // Priority: Extract user from JWT. If no token, set default/testing user.
         $this->bootstrapUser();
     }
 
     /**
-     * Standardize Path logic merged from both versions
+     * Standardize Path logic: removes query strings and handles sub-directories.
      */
     private function parseUri(): string
     {
@@ -48,7 +47,7 @@ class Request
     }
 
     /**
-     * Parse all Request Headers
+     * Parse all Request Headers (Cross-platform compatible)
      */
     private function parseHeaders(): array
     {
@@ -69,9 +68,10 @@ class Request
     }
 
     /**
-     * Role and User Data-vai JWT-la irunthu extract panra logic
+     * Role and User Data-vai JWT-la irunthu extract panra logic.
+     * Merged with manual testing fallback.
      */
-    private function bootstrapUser()
+    private function bootstrapUser(): void
     {
         $token = $this->getBearerToken();
         
@@ -93,17 +93,20 @@ class Request
             }
         }
 
-        // Fallback for TESTING/GUEST: (Merged from HEAD requirement)
+        /**
+         * 💡 TESTING FALLBACK: 
+         * Token illana, inga roles-ah maathi manual-aa test pannunga.
+         */
         $this->user = [
             'id' => 1,
-            'role_name' => 'Pharmacist', // 👈 'Provider' or 'Pharmacist' nu mathi test pannunga
+            'role_name' => 'Pharmacist', // 👈 Change to 'Provider' for testing permissions
             'full_name' => 'Test User'
         ];
         $this->tenant_id = 1;
     }
 
     /**
-     * Body parsing logic (Supports JSON and Form Data)
+     * Body parsing logic (Supports JSON and standard Form Data)
      */
     private function parseBody(): array
     {
@@ -112,35 +115,41 @@ class Request
             $raw = file_get_contents('php://input');
             $decoded = json_decode($raw, true);
 
+            // If it's JSON, return decoded array
             if (strpos($contentType, 'application/json') !== false) {
                 return is_array($decoded) ? $decoded : [];
             }
             
+            // Otherwise, check $_POST or fallback to decoded raw input
             return !empty($_POST) ? $_POST : (is_array($decoded) ? $decoded : []);
         }
         return $_GET;
     }
 
-    // --- GETTERS ---
+    // --- GETTERS & UTILITIES ---
 
-    public function getMethod(): string { 
+    public function getMethod(): string 
+    { 
         return strtolower($this->method); 
     }
 
-    public function getPath(): string { 
+    public function getPath(): string 
+    { 
         return $this->uri; 
     }
 
-    public function getHeader(string $name): ?string {
+    public function getHeader(string $name): ?string 
+    {
         return $this->headers[strtolower($name)] ?? null;
     }
 
-    public function getBody(): array { 
+    public function getBody(): array 
+    { 
         return $this->body; 
     }
 
     /**
-     * Bearer token-ai extract panna idhu romba mukkiam
+     * Extract Bearer token from Authorization header.
      */
     public function getBearerToken(): ?string
     {
@@ -151,12 +160,14 @@ class Request
         return null;
     }
 
-    // Attributes storage (Middleware/Controllers kooda data share panna)
-    public function setAttribute(string $key, $value): void { 
+    // Attributes storage (Used by Middlewares to pass data to Controllers)
+    public function setAttribute(string $key, $value): void 
+    { 
         $this->attributes[$key] = $value; 
     }
 
-    public function getAttribute(string $key, $default = null) {
+    public function getAttribute(string $key, $default = null) 
+    {
         return $this->attributes[$key] ?? $default;
     }
 }

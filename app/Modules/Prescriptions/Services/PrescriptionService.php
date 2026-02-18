@@ -17,52 +17,53 @@ class PrescriptionService {
 
     /**
      * CREATE PRESCRIPTION
-     * Controller-laye data encrypt aagi varuvadhala, inga mapping mattum panroam.
+     * Note: Data is encrypted in the Controller before reaching here.
+     * This service maps the data and enforces default values.
      */
     public function createPrescription($data) {
         return $this->model->create([
-            'tenant_id'      => $data['tenant_id'],           // Multi-tenancy isolation
-            'appointment_id' => $data['appointment_id'] ?? null, // Merged FIX: optional parameter
+            'tenant_id'      => $data['tenant_id'],           // Clinic isolation
+            'appointment_id' => $data['appointment_id'] ?? null,
             'patient_id'     => $data['patient_id'],
-            'provider_id'    => $data['provider_id'],         // From getAuthUser()
-            'medicine_name'  => $data['medicine_name'],      // Already AES Encrypted in Controller
-            'dosage'         => $data['dosage'],             // Already AES Encrypted in Controller
-            'duration_days'  => $data['duration_days'] ?? 7,  // Merged FIX: default 7 days
+            'provider_id'    => $data['provider_id'],         // The Doctor/Provider
+            'medicine_name'  => $data['medicine_name'],       // AES Encrypted string
+            'dosage'         => $data['dosage'],              // AES Encrypted string
+            'duration_days'  => $data['duration_days'] ?? 7,  // Default to 1 week
             'notes'          => $data['notes'] ?? ''
         ]);
     }
 
     /**
      * UPDATE PRESCRIPTION
-     * Handles Status tracking and Pharmacist ID mapping.
+     * Handles Status tracking and Pharmacist ID mapping for Audit Logs.
      */
     public function update($id, $tenant_id, $data, $userId, $userRole) {
         // 1. Tenant Isolation Check: Verify prescription belongs to the current clinic
         $prescription = $this->model->findById($id, $tenant_id);
         if (!$prescription) {
-            throw new \Exception("Prescription not found or unauthorized access vro!");
+            throw new \Exception("Prescription not found or unauthorized access!");
         }
 
         // 2. Build Update Payload
         $updateData = [];
         
-        // Controller-la irundhu encrypted dosage vandhaa mattum update list-la serkiroam
+        // If a new encrypted dosage is provided, include it in the update
         if (isset($data['dosage'])) {
             $updateData['dosage'] = $data['dosage'];
         }
 
-        // 3. Status mapping
+        // 3. Status Mapping & Role-Based Tracking
         $updateData['status'] = $data['status'] ?? 'dispensed';
         
         /**
          * ROLE-BASED TRACKING:
-         * User role 'Pharmacist'-aa irundha, avanga ID-ai 'pharmacist_id' column-la track panroam.
-         * Ithu AUDIT purposes-ku romba mukkiam.
+         * If the user is a Pharmacist, we record their ID as the person who dispensed it.
+         * This is vital for HIPAA/Security auditing.
          */
         if ($userRole === 'Pharmacist') {
             $updateData['pharmacist_id'] = $userId;
         } else {
-            // Provider or Admin update panna existing pharmacist_id-ai retain panna null handle panroam
+            // Retain existing pharmacist if update is by an Admin/Provider
             $updateData['pharmacist_id'] = $prescription['pharmacist_id'] ?? null;
         }
 

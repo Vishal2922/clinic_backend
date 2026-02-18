@@ -11,8 +11,12 @@ class Controller
     protected Request $request;
     protected Response $response;
 
-    public function __construct() {
-        // Shared logic global-aa thevai-na inga add pannalaam
+    /**
+     * Constructor: Shared logic global-aa thevai-na inga add pannalaam.
+     */
+    public function __construct() 
+    {
+        // Add shared logic here (e.g., base logging or session checks)
     }
 
     public function setRequest(Request $request): void
@@ -26,14 +30,15 @@ class Controller
     }
 
     /**
-     * Optional Helper: Controller-la $this->json() nu easy-aa use panna
+     * Optional Helper: Controller-la $this->json() nu easy-aa use panna.
      */
-    protected function json($data, $code = 200) {
+    protected function json($data, $code = 200): void
+    {
         Response::json($data, $code);
     }
 
     /**
-     * Authenticated user data-vai JWT payload-la irundhu edukka
+     * Authenticated user data-vai JWT payload-la irundhu edukka.
      */
     protected function getAuthUser(): ?array
     {
@@ -42,7 +47,7 @@ class Controller
     }
 
     /**
-     * Role-based Access Check (Manual Check inside Controller if needed)
+     * Role-based Access Check (Manual Check inside Controller if needed).
      */
     protected function checkRole(array $allowedRoles): bool
     {
@@ -54,7 +59,7 @@ class Controller
     }
 
     /**
-     * Tenant ID-ai middleware attribute-la irundhu edukka
+     * Tenant ID-ai middleware attribute-la irundhu edukka.
      */
     protected function getTenantId(): ?int
     {
@@ -87,7 +92,7 @@ class Controller
                 // 3. Minimum Length Check
                 if (strpos($rule, 'min:') === 0) {
                     $min = (int) substr($rule, 4);
-                    if ($value && strlen($value) < $min) {
+                    if ($value && strlen((string)$value) < $min) {
                         $errors[$field][] = "{$field} must be at least {$min} characters.";
                     }
                 }
@@ -95,7 +100,7 @@ class Controller
                 // 4. Maximum Length Check
                 if (strpos($rule, 'max:') === 0) {
                     $max = (int) substr($rule, 4);
-                    if ($value && strlen($value) > $max) {
+                    if ($value && strlen((string)$value) > $max) {
                         $errors[$field][] = "{$field} must not exceed {$max} characters.";
                     }
                 }

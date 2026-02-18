@@ -12,12 +12,15 @@ use App\Modules\ReportsDashboard\Controllers\DashboardController;
 use App\Modules\Patients\Controllers\PatientController;
 use App\Modules\Appointments\Controllers\AppointmentController;
 
-// 1. Middleware references (Custom Router-ku mukkiam)
+/**
+ * 1. Middleware Definitions
+ * Registering class names to variables for cleaner group definitions.
+ */
 $tenant           = ResolveTenant::class;
 $auth             = AuthJWT::class;
 $csrf             = CsrfGuard::class;
 
-// Role-based Access Control (RBAC) definitions
+// Role-based Access Control (RBAC) strings
 $adminOnly        = AuthorizeRole::class . ':Admin';
 $providerOnly     = AuthorizeRole::class . ':Provider';
 $staff            = AuthorizeRole::class . ':Provider,Pharmacist,Admin';
@@ -28,11 +31,11 @@ $allAuthenticated = AuthorizeRole::class . ':Admin,Provider,Nurse,Patient,Pharma
 //  HEALTH CHECK (Public)
 // ═══════════════════════════════════════════════════════════
 $router->get('/api/health', function ($request, $response) {
-    $response->success([
+    $response->json([
         'service'   => 'Clinic Management API',
         'status'    => 'running',
         'timestamp' => date('Y-m-d H:i:s'),
-    ], 'API is healthy');
+    ], 200);
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -51,31 +54,35 @@ $router->group(['prefix' => '/api/auth', 'middleware' => [$tenant]], function ($
 });
 
 // ═══════════════════════════════════════════════════════════
-//  MODULE 3: PATIENT MANAGEMENT (Merged from HEAD)
+//  MODULE 3: PATIENT MANAGEMENT
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/patients', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $adminOnly, $csrf) {
-    $router->get('/',    [PatientController::class, 'index'],   [$clinicStaff]);
-    $router->get('/{id}', [PatientController::class, 'show'],    [$clinicStaff]);
-    $router->post('/',   [PatientController::class, 'store'],   [$clinicStaff, $csrf]);
-    $router->put('/{id}', [PatientController::class, 'update'],  [$clinicStaff, $csrf]);
+    $router->get('/',       [PatientController::class, 'index'],   [$clinicStaff]);
+    $router->get('/{id}',   [PatientController::class, 'show'],    [$clinicStaff]);
+    $router->post('/',      [PatientController::class, 'store'],   [$clinicStaff, $csrf]);
+    $router->put('/{id}',   [PatientController::class, 'update'],  [$clinicStaff, $csrf]);
     $router->delete('/{id}', [PatientController::class, 'destroy'], [$adminOnly]);
 });
 
 // ═══════════════════════════════════════════════════════════
-//  MODULE 4: APPOINTMENT MANAGEMENT (Merged from HEAD)
+//  MODULE 4: APPOINTMENT MANAGEMENT
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $csrf) {
-    $router->get('/',        [AppointmentController::class, 'index'],   [$clinicStaff]);
-    $router->post('/book',   [AppointmentController::class, 'store'],   [$clinicStaff, $csrf]);
-    $router->patch('/{id}/status', [AppointmentController::class, 'updateStatus'], [$clinicStaff, $csrf]);
+    $router->get('/',               [AppointmentController::class, 'index'],   [$clinicStaff]);
+    $router->post('/book',          [AppointmentController::class, 'store'],   [$clinicStaff, $csrf]);
+    $router->patch('/{id}/status',  [AppointmentController::class, 'updateStatus'], [$clinicStaff, $csrf]);
     $router->delete('/{id}/cancel', [AppointmentController::class, 'destroy'], [$clinicStaff]);
 });
 
 // ═══════════════════════════════════════════════════════════
 //  MODULE 5: PRESCRIPTION MANAGEMENT
+//  Role: Providers create, Pharmacists/Providers can update.
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $auth]], function ($router) use ($providerOnly, $staff, $csrf) {
+    // POST /api/prescriptions -> Uses providerOnly role
     $router->post('/',      [PrescriptionController::class, 'store'], [$providerOnly, $csrf]);
+    
+    // PUT /api/prescriptions/{id} -> Uses staff role (Provider + Pharmacist)
     $router->put('/{id}',   [PrescriptionController::class, 'update'], [$staff, $csrf]);
 });
 
@@ -83,5 +90,5 @@ $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $aut
 //  MODULE 6: DASHBOARD STATISTICS
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
-    $router->get('/stats', [DashboardController::class, 'index'], [$staff]);
+    $router->get('/stats',  [DashboardController::class, 'index'], [$staff]);
 });
