@@ -8,49 +8,50 @@ class Prescription {
     private $db;
 
     public function __construct() {
-        $database = new Database();
-        $this->db = $database->getConnection();
+        // 🔥 FIX: 'new' keyword badhula 'getInstance()' use pannanum
+        $this->db = Database::getInstance();
     }
 
     public function create($data) {
-        // Teammate structure padi tenant_id and provider_id (user_id) store aagum
-        $sql = "INSERT INTO prescriptions (tenant_id, appointment_id, patient_id, provider_id, medicines, notes, status) 
-                VALUES (:tenant_id, :appointment_id, :patient_id, :provider_id, :medicines, :notes, 'pending')";
+        // Namma merge panna Database::insert() method use pannalaam
+        $sql = "INSERT INTO prescriptions (tenant_id, appointment_id, patient_id, provider_id, medicine_name, dosage, notes, status) 
+                VALUES (:tenant_id, :appointment_id, :patient_id, :provider_id, :medicine_name, :dosage, :notes, 'pending')";
         
-        $stmt = $this->db->prepare($sql);
-        
-        $stmt->execute([
+        // Service/Controller-la irundhu vara column names-ku match panniyirukkaen
+        return $this->db->insert($sql, [
             ':tenant_id'      => $data['tenant_id'],
             ':appointment_id' => $data['appointment_id'],
             ':patient_id'     => $data['patient_id'],
             ':provider_id'    => $data['provider_id'],
-            ':medicines'      => $data['medicines'], // Encrypted String
+            ':medicine_name'  => $data['medicine_name'], // Encrypted in Controller
+            ':dosage'         => $data['dosage'],        // Encrypted in Controller
             ':notes'          => $data['notes'] ?? null
         ]);
-        
-        return $this->db->lastInsertId();
     }
 
     public function findById($id, $tenant_id) {
-        // Multi-tenancy check: User-oda tenant_id match aaganaum
-        $stmt = $this->db->prepare("SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id");
-        $stmt->execute([':id' => $id, ':tenant_id' => $tenant_id]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        // Namma merge panna Database::fetch() method
+        $sql = "SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id";
+        return $this->db->fetch($sql, [':id' => $id, ':tenant_id' => $tenant_id]);
     }
 
-    // Role-based update logic: Pharmacist dispense pannumbothu avaroda ID-yum save aagum
-    public function updateStatus($id, $tenant_id, $status, $pharmacist_id = null) {
+    /**
+     * Role-based update logic
+     */
+    public function updateStatus($id, $tenant_id, $updateData) {
+        // Service layer-la irundhu array-vaa data varum
         $sql = "UPDATE prescriptions SET 
                 status = :status, 
                 pharmacist_id = :pharmacist_id,
+                dosage = :dosage,
                 updated_at = CURRENT_TIMESTAMP 
                 WHERE id = :id AND tenant_id = :tenant_id";
         
-        $stmt = $this->db->prepare($sql);
-        
-        return $stmt->execute([
-            ':status'        => $status,
-            ':pharmacist_id' => $pharmacist_id, // Who dispensed it
+        // Namma merge panna Database::execute() method
+        return $this->db->execute($sql, [
+            ':status'        => $updateData['status'],
+            ':pharmacist_id' => $updateData['pharmacist_id'] ?? null,
+            ':dosage'        => $updateData['dosage'] ?? null, // Encrypted if updated
             ':id'            => $id,
             ':tenant_id'     => $tenant_id
         ]);

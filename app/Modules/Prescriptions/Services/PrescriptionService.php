@@ -18,12 +18,12 @@ class PrescriptionService {
     public function createPrescription($data) {
         return $this->model->create([
             'tenant_id'      => $data['tenant_id'],    // Multi-tenancy isolation
-            'appointment_id' => $data['appointment_id'],
+            'appointment_id' => $data['appointment_id'] ?? null, // FIX: optional
             'patient_id'     => $data['patient_id'],
             'provider_id'    => $data['provider_id'],  // From getValidatedUser()
             'medicine_name'  => $data['medicine_name'], // Already AES Encrypted in Controller
             'dosage'         => $data['dosage'],        // Already AES Encrypted in Controller
-            'duration_days'  => $data['duration_days'],
+            'duration_days'  => $data['duration_days'] ?? 7, // FIX: default 7 days
             'notes'          => $data['notes'] ?? ''
         ]);
     }

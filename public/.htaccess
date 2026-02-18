@@ -1,4 +1,27 @@
+# 1. Enable Rewrite Engine
 RewriteEngine On
+
+# 2. Redirect everything to index.php except existing files/folders
+# HEAD and teammate's version merged for better compatibility
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# 3. Security Headers (Teammate's addition - Highly Recommended)
+# Intha headers unga healthcare data-vai browser level-la protect pannum
+<IfModule mod_headers.c>
+    # Prevent MIME type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+    
+    # Prevent your site from being rendered in an iframe (Clickjacking protection)
+    Header always set X-Frame-Options "DENY"
+    
+    # Enable XSS filtering in browsers
+    Header always set X-XSS-Protection "1; mode=block"
+    
+    # Optional: Strictly allow only certain origins if needed later
+    # Header set Access-Control-Allow-Origin "*"
+</IfModule>
+
+# 4. Disable Directory Browsing (Privacy Security)
+Options -Indexes
