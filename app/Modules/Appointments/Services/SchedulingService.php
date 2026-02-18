@@ -3,96 +3,106 @@
 namespace App\Modules\Appointments\Services;
 
 use App\Modules\Appointments\Models\Appointment;
-use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
 
+/**
+ * SchedulingService: Fixed Version.
+ *
+ * Bugs Fixed:
+ * 1. Used Carbon (Laravel date library) — not available in this framework.
+ *    Replaced with PHP's native DateTime.
+ * 2. Used Eloquent query builder (Appointment::where()->whereIn()->where()->exists()).
+ *    Replaced with custom Appointment model methods.
+ * 3. Used Illuminate\Support\Facades\Log — replaced with app_log().
+ * 4. pluck()->map()->toArray() — Eloquent collection methods. Replaced with array_column + array_map.
+ */
 class SchedulingService
 {
-    /**
-     * SLOT DURATION: Standard-ah 30 mins vachukalam.
-     */
-    protected $slotDuration = 30;
+    protected int $slotDuration = 30; // minutes
 
-    /**
-     * Logic: Slot Conflict Check
-     * Doctor-ku vera appointment request panna time-la overlap aagutha nu check panrom.
-     */
-    public function isSlotAvailable(int $doctorId, $requestedTime): bool
+    private Appointment $appointmentModel;
+
+    public function __construct()
     {
-        $startTime = Carbon::parse($requestedTime);
-        $endTime = (clone $startTime)->addMinutes($this->slotDuration);
-
-        // Conflict check: overlaps with existing appointments
-        $conflict = Appointment::where('doctor_id', $doctorId)
-            ->whereIn('status', ['scheduled', 'arrived', 'in-consultation'])
-            ->where(function ($query) use ($startTime, $endTime) {
-                $query->where(function ($q) use ($startTime, $endTime) {
-                    $q->where('appointment_time', '>=', $startTime)
-                      ->where('appointment_time', '<', $endTime);
-                })
-                ->orWhere(function ($q) use ($startTime) {
-                    $q->where('appointment_time', '<=', $startTime)
-                      ->whereRaw('DATE_ADD(appointment_time, INTERVAL ? MINUTE) > ?', [$this->slotDuration, $startTime]);
-                });
-            })
-            ->exists();
-
-        return !$conflict;
+        $this->appointmentModel = new Appointment();
     }
 
     /**
-     * Logic: Daily Schedule Generator
-     * Oru specific date-ku doctor-oda available slots list pannum.
+     * Check if a time slot is available for a doctor.
+     * Returns true if available, false if there's a conflict.
      */
-    public function generateDoctorSchedule(int $doctorId, string $date)
+    public function isSlotAvailable(int $doctorId, string $requestedTime): bool
     {
-        $startTime = Carbon::parse($date)->setHour(9)->setMinute(0); // Clinic opens at 9 AM
-        $endTime = Carbon::parse($date)->setHour(18)->setMinute(0);  // Clinic closes at 6 PM
-        
+        $startTime = new \DateTime($requestedTime);
+        $endTime   = clone $startTime;
+        $endTime->modify("+{$this->slotDuration} minutes");
+
+        return !$this->appointmentModel->hasConflict(
+            $doctorId,
+            $startTime->format('Y-m-d H:i:s'),
+            $endTime->format('Y-m-d H:i:s')
+        );
+    }
+
+    /**
+     * Generate available time slots for a doctor on a given date.
+     */
+    public function generateDoctorSchedule(int $doctorId, string $date): array
+    {
+        $startTime = new \DateTime("{$date} 09:00:00");
+        $endTime   = new \DateTime("{$date} 18:00:00");
+
+        // Get already booked slots
+        $bookedRows  = $this->appointmentModel->getBookedSlotsForDoctor($doctorId, $date);
+        $bookedTimes = array_map(function ($row) {
+            return (new \DateTime($row['appointment_time']))->format('H:i');
+        }, $bookedRows);
+
         $schedule = [];
+        $current  = clone $startTime;
 
-        // Get already booked slots for that day
-        $bookedSlots = Appointment::where('doctor_id', $doctorId)
-            ->whereDate('appointment_time', $date)
-            ->whereIn('status', ['scheduled', 'arrived'])
-            ->pluck('appointment_time')
-            ->map(fn($t) => $t->format('H:i'))
-            ->toArray();
+        while ($current < $endTime) {
+            $slotTime = $current->format('H:i');
 
-        while ($startTime < $endTime) {
-            $slotTime = $startTime->format('H:i');
-            
             $schedule[] = [
-                'time' => $slotTime,
-                'available' => !in_array($slotTime, $bookedSlots),
-                'meridiem' => $startTime->format('A')
+                'time'      => $slotTime,
+                'available' => !in_array($slotTime, $bookedTimes),
+                'meridiem'  => $current->format('A'),
             ];
 
-            $startTime->addMinutes($this->slotDuration);
+            $current->modify("+{$this->slotDuration} minutes");
         }
 
         return $schedule;
     }
 
     /**
-     * Logic: Reschedule Appointment
-     * Existing appointment-ah vera slot-ku mathurathu.
+     * Reschedule an existing appointment to a new time slot.
      */
-    public function reschedule(int $appointmentId, string $newTime)
+    public function reschedule(int $appointmentId, int $tenantId, string $newTime): array
     {
-        $appointment = Appointment::findOrFail($appointmentId);
+        $appointment = $this->appointmentModel->findById($appointmentId, $tenantId);
 
-        if (!$this->isSlotAvailable($appointment->doctor_id, $newTime)) {
-            throw new \Exception("The newly requested time slot is already booked.");
+        if (!$appointment) {
+            throw new \RuntimeException('Appointment not found.');
         }
 
-        $appointment->update([
-            'appointment_time' => $newTime,
-            'status' => 'scheduled' // Reset status if it was cancelled before
-        ]);
+        if (!$this->isSlotAvailable((int) $appointment['doctor_id'], $newTime)) {
+            throw new \RuntimeException('The newly requested time slot is already booked.');
+        }
 
-        Log::info("Appointment Rescheduled: ID {$appointmentId} to {$newTime}");
+        // Update to new time and reset status
+        $this->appointmentModel->updateStatus($appointmentId, $tenantId, 'scheduled');
 
-        return $appointment;
+        // Update appointment time via direct DB call
+        $db = \App\Core\Database::getInstance();
+        $db->execute(
+            'UPDATE appointments SET appointment_time = :time, status = :status, updated_at = NOW()
+             WHERE id = :id AND tenant_id = :tid',
+            ['time' => $newTime, 'status' => 'scheduled', 'id' => $appointmentId, 'tid' => $tenantId]
+        );
+
+        app_log("Appointment Rescheduled: ID {$appointmentId} to {$newTime}");
+
+        return $this->appointmentModel->findById($appointmentId, $tenantId);
     }
 }

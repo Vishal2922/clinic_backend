@@ -3,80 +3,98 @@
 namespace App\Modules\Patients\Services;
 
 use App\Modules\Patients\Models\Patient;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Exception;
 
+/**
+ * PatientService: Fixed Version.
+ * Bugs Fixed:
+ * 1. Used Laravel facades (DB::transaction, Log::info, auth()->id()) — replaced with
+ *    custom framework equivalents (app_log, manual DB calls via model).
+ * 2. Patient::findOrFail() — Eloquent method doesn't exist; replaced with findById() + manual check.
+ * 3. $patient->appointments()->where()->exists() — Eloquent relation doesn't exist in custom model.
+ *    Replaced with a model method call.
+ * 4. Patient::create(), $patient->fill(), $patient->isDirty(), $patient->save() — all Eloquent.
+ *    Replaced with custom model insert/update methods.
+ * 5. Patient::when()->latest()->paginate() — Eloquent. Replaced with custom model search.
+ */
 class PatientService
 {
-    /**
-     * Business Logic: Create Patient with Transaction.
-     * Inga thaan neenga extra logics (Welcome SMS/Email) add panna mudiyum.
-     */
-    public function createPatient(array $data): Patient
+    private Patient $model;
+
+    public function __construct()
     {
-        return DB::transaction(function () use ($data) {
-            // Logic: Phone number-ah standardize panrom (removing spaces/dashes)
-            $data['phone'] = preg_replace('/\D/', '', $data['phone']);
-            
-            $patient = Patient::create($data);
-
-            Log::info("New Patient Registered: ID {$patient->id}");
-            
-            // Future-la inga Notification trigger pannalam: 
-            // event(new PatientRegistered($patient));
-
-            return $patient;
-        });
+        $this->model = new Patient();
     }
 
     /**
-     * Business Logic: Update with "Dirty" check and Logging.
+     * List patients for a tenant with pagination.
      */
-    public function updatePatient(int $id, array $data): Patient
+    public function listPatients(int $tenantId, int $page = 1, int $perPage = 10): array
     {
-        $patient = Patient::findOrFail($id);
-
-        return DB::transaction(function () use ($patient, $data) {
-            $patient->fill($data);
-
-            if ($patient->isDirty()) {
-                $patient->save();
-                Log::info("Patient Data Updated: ID {$patient->id} by User: " . auth()->id());
-            }
-
-            return $patient;
-        });
+        return $this->model->getAllByTenant($tenantId, $page, $perPage);
     }
 
     /**
-     * Business Logic: Advanced Search Logic.
-     * Controller-la simple query illama, complex search-ku ithu useful.
+     * Get a single patient by ID within a tenant.
      */
-    public function searchPatients(?string $query)
+    public function getPatient(int $id, int $tenantId): ?array
     {
-        return Patient::when($query, function ($q) use ($query) {
-            $q->where('name', 'LIKE', "%{$query}%")
-              ->orWhere('phone', 'LIKE', "%{$query}%");
-        })
-        ->latest()
-        ->paginate(15);
+        return $this->model->findById($id, $tenantId);
     }
 
     /**
-     * Soft Delete with specific Business Condition.
+     * Create a patient.
      */
-    public function deletePatient(int $id): bool
+    public function createPatient(array $data, int $tenantId): array
     {
-        $patient = Patient::findOrFail($id);
+        // Normalize phone number
+        $data['phone'] = preg_replace('/\D/', '', $data['phone']);
+        $data['tenant_id'] = $tenantId;
 
-        // Example Logic: Active appointments iruntha delete panna koodathu
-        $hasAppointments = $patient->appointments()->where('status', 'scheduled')->exists();
-        
-        if ($hasAppointments) {
-            throw new Exception("Intha patient-ku scheduled appointments irukku. Delete panna mudiyathu.");
+        $id = $this->model->create($data);
+        app_log("New Patient Registered: ID {$id}");
+
+        return $this->model->findById($id, $tenantId);
+    }
+
+    /**
+     * Update a patient record.
+     */
+    public function updatePatient(int $id, array $data, int $tenantId): array
+    {
+        $patient = $this->model->findById($id, $tenantId);
+        if (!$patient) {
+            throw new \RuntimeException('Patient not found');
         }
 
-        return $patient->delete();
+        $this->model->update($id, $data, $tenantId);
+        app_log("Patient Data Updated: ID {$id}");
+
+        return $this->model->findById($id, $tenantId);
+    }
+
+    /**
+     * Soft-delete a patient after checking for active appointments.
+     */
+    public function deletePatient(int $id, int $tenantId): bool
+    {
+        $patient = $this->model->findById($id, $tenantId);
+        if (!$patient) {
+            throw new \RuntimeException('Patient not found');
+        }
+
+        // Check for active scheduled appointments before deletion
+        if ($this->model->hasScheduledAppointments($id, $tenantId)) {
+            throw new \RuntimeException('This patient has scheduled appointments. Cannot delete.');
+        }
+
+        return $this->model->softDelete($id, $tenantId);
+    }
+
+    /**
+     * Search patients by name or phone.
+     */
+    public function searchPatients(?string $query, int $tenantId, int $page = 1, int $perPage = 15): array
+    {
+        return $this->model->search($query, $tenantId, $page, $perPage);
     }
 }

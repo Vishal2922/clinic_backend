@@ -2,132 +2,174 @@
 
 namespace App\Modules\Appointments\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Core\Controller;
+use App\Core\Request;
+use App\Core\Response;
+use App\Modules\Appointments\Services\SchedulingService;
 use App\Modules\Appointments\Models\Appointment;
-use App\Modules\Appointments\Services\AppointmentService;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Exception;
 
+/**
+ * AppointmentController: Fixed Version.
+ *
+ * Bugs Fixed:
+ * 1. CRITICAL: Used Laravel base class `App\Http\Controllers\Controller` and Laravel facades.
+ *    Replaced with custom framework equivalents.
+ * 2. Constructor dependency-injected `AppointmentService $appointmentService` — custom Router
+ *    does not support constructor DI. Replaced with `new SchedulingService()` (actual class name).
+ * 3. Called `$this->appointmentService->checkSlotConflict()` but SchedulingService has
+ *    `isSlotAvailable()` — method name mismatch. Fixed to call correct method.
+ * 4. Constructor used Laravel `$this->middleware()` — doesn't exist. RBAC handled via routes.
+ * 5. `Appointment::with(['patient','doctor'])->latest()->paginate()` — Eloquent. Replaced with model/service.
+ * 6. `Appointment::findOrFail()` — Eloquent. Replaced with model findById() + manual 404.
+ * 7. `$appointment->update()` — Eloquent. Replaced with model update().
+ * 8. response()->json() doesn't exist — replaced with Response::json().
+ * 9. $request->validate() doesn't exist — replaced with $this->validate().
+ * 10. Missing 'tenant_id' when creating appointments (multi-tenancy isolation broken).
+ */
 class AppointmentController extends Controller
 {
-    protected $appointmentService;
+    private SchedulingService $schedulingService;
+    private Appointment $appointmentModel;
 
-    public function __construct(AppointmentService $appointmentService)
+    public function __construct()
     {
-        $this->appointmentService = $appointmentService;
-        
-        // RBAC: Doctors and Staff can view, but only Admin/Staff can manage
-        $this->middleware('role:admin,staff')->except(['index', 'show', 'updateStatus']);
-        $this->middleware('role:admin,staff,doctor')->only(['index', 'show', 'updateStatus']);
+        $this->schedulingService = new SchedulingService();
+        $this->appointmentModel  = new Appointment();
     }
 
     /**
-     * List all appointments with status filtering.
+     * GET /api/appointments
      */
-    public function index(Request $request)
+    public function index(Request $request): void
     {
-        $query = Appointment::with(['patient', 'doctor']);
-
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-
-        return response()->json($query->latest()->paginate(15));
-    }
-
-    /**
-     * Book an Appointment with Conflict Check.
-     */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'patient_id'       => 'required|exists:patients,id',
-            'doctor_id'        => 'required|exists:users,id',
-            'appointment_time' => 'required|date|after:now',
-            'reason'           => 'nullable|string'
-        ]);
+        $tenantId = $this->getTenantId();
+        $status   = $request->getQueryParam('status');
+        $page     = (int) $request->getQueryParam('page', 1);
+        $perPage  = (int) $request->getQueryParam('per_page', 15);
 
         try {
-            DB::beginTransaction();
+            $result = $this->appointmentModel->getAllByTenant($tenantId, $status, $page, $perPage);
+            Response::json(['message' => 'Appointments retrieved', 'data' => $result], 200);
+        } catch (\Exception $e) {
+            app_log('List appointments error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to retrieve appointments.', 500);
+        }
+    }
 
-            // 1. Service Layer logic panni conflict check panrom
-            $isConflict = $this->appointmentService->checkSlotConflict(
-                $validated['doctor_id'], 
-                $validated['appointment_time']
+    /**
+     * POST /api/appointments/book
+     * FIX #3: checkSlotConflict() → isSlotAvailable() (correct method name).
+     * FIX #10: tenant_id now included when creating appointments.
+     */
+    public function store(Request $request): void
+    {
+        $tenantId = $this->getTenantId();
+        $data     = $request->getBody();
+
+        $errors = $this->validate($data, [
+            'patient_id'       => 'required|numeric',
+            'doctor_id'        => 'required|numeric',
+            'appointment_time' => 'required',
+            'reason'           => '',
+        ]);
+
+        if (!empty($errors)) {
+            Response::error('Validation failed', 422, $errors);
+        }
+
+        // Validate appointment_time is in the future
+        if (strtotime($data['appointment_time']) <= time()) {
+            Response::error('Appointment time must be in the future.', 422);
+        }
+
+        try {
+            // FIX #3: Correct method name is isSlotAvailable(), not checkSlotConflict()
+            $isAvailable = $this->schedulingService->isSlotAvailable(
+                (int) $data['doctor_id'],
+                $data['appointment_time']
             );
 
-            if ($isConflict) {
-                return response()->json([
-                    'error' => 'Intha time slot-la vera oru appointment booked-la irukku. Vera time select pannunga.'
-                ], 422);
+            if (!$isAvailable) {
+                Response::error('This time slot is already booked. Please select another time.', 422);
             }
 
-            // 2. Create Appointment
-            $appointment = Appointment::create([
-                'patient_id'       => $validated['patient_id'],
-                'doctor_id'        => $validated['doctor_id'],
-                'appointment_time' => $validated['appointment_time'],
-                'reason'           => $validated['reason'],
-                'status'           => 'scheduled' // Default status
+            $id = $this->appointmentModel->create([
+                'tenant_id'        => $tenantId, // FIX #10
+                'patient_id'       => (int) $data['patient_id'],
+                'doctor_id'        => (int) $data['doctor_id'],
+                'appointment_time' => $data['appointment_time'],
+                'reason'           => $data['reason'] ?? null,
+                'status'           => 'scheduled',
             ]);
 
-            DB::commit();
+            $appointment = $this->appointmentModel->findById($id, $tenantId);
+            Response::json(['message' => 'Appointment booked successfully!', 'data' => $appointment], 201);
 
-            return response()->json([
-                'message' => 'Appointment booked successfully!',
-                'data'    => $appointment
-            ], 201);
-
-        } catch (Exception $e) {
-            DB::rollBack();
-            Log::error("Booking Error: " . $e->getMessage());
-            return response()->json(['error' => 'Booking process-la error.'], 500);
+        } catch (\Exception $e) {
+            app_log('Booking error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Booking process error.', 500);
         }
     }
 
     /**
-     * Update Appointment Status (Status Tracking Logic).
-     * Usage: scheduled -> arrived -> in-consultation -> completed / cancelled
+     * PATCH /api/appointments/{id}/status
      */
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, string $id): void
     {
-        $appointment = Appointment::findOrFail($id);
+        $tenantId = $this->getTenantId();
+        $data     = $request->getBody();
 
-        $validated = $request->validate([
-            'status' => 'required|in:scheduled,arrived,in-consultation,completed,cancelled'
+        $errors = $this->validate($data, [
+            'status' => 'required|in:scheduled,arrived,in-consultation,completed,cancelled',
         ]);
 
+        if (!empty($errors)) {
+            Response::error('Validation failed', 422, $errors);
+        }
+
         try {
-            // Logic: Completed aana appointment-ah thirumba cancel panna koodathu
-            if ($appointment->status === 'completed') {
-                return response()->json(['error' => 'Completed appointment-ah modify panna mudiyathu.'], 422);
+            $appointment = $this->appointmentModel->findById((int) $id, $tenantId);
+            if (!$appointment) {
+                Response::error('Appointment not found.', 404);
             }
 
-            $appointment->update(['status' => $validated['status']]);
+            if ($appointment['status'] === 'completed') {
+                Response::error('Cannot modify a completed appointment.', 422);
+            }
 
-            return response()->json([
-                'message' => "Appointment status updated to {$validated['status']}",
-                'data'    => $appointment
-            ]);
+            $this->appointmentModel->updateStatus((int) $id, $tenantId, $data['status']);
+            $updated = $this->appointmentModel->findById((int) $id, $tenantId);
 
-        } catch (Exception $e) {
-            Log::error("Status Update Error: " . $e->getMessage());
-            return response()->json(['error' => 'Status update failed.'], 500);
+            Response::json([
+                'message' => "Appointment status updated to {$data['status']}",
+                'data'    => $updated,
+            ], 200);
+
+        } catch (\Exception $e) {
+            app_log('Status update error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Status update failed.', 500);
         }
     }
 
     /**
-     * Cancel Appointment (Soft Delete use pannama, status-ah cancel panrom).
+     * DELETE /api/appointments/{id}/cancel
      */
-    public function destroy($id)
+    public function destroy(Request $request, string $id): void
     {
-        $appointment = Appointment::findOrFail($id);
-        
-        // Logic: Cancel panna 'cancelled' status-ku mathurathu thaan safe
-        $appointment->update(['status' => 'cancelled']);
+        $tenantId = $this->getTenantId();
 
-        return response()->json(['message' => 'Appointment cancelled successfully.']);
+        try {
+            $appointment = $this->appointmentModel->findById((int) $id, $tenantId);
+            if (!$appointment) {
+                Response::error('Appointment not found.', 404);
+            }
+
+            $this->appointmentModel->updateStatus((int) $id, $tenantId, 'cancelled');
+            Response::json(['message' => 'Appointment cancelled successfully.'], 200);
+
+        } catch (\Exception $e) {
+            app_log('Cancel appointment error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to cancel appointment.', 500);
+        }
     }
 }

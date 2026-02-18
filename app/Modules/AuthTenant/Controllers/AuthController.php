@@ -5,7 +5,19 @@ namespace App\Modules\AuthTenant\Controllers;
 use App\Core\Controller;
 use App\Modules\AuthTenant\Services\AuthService;
 use App\Core\Middleware\CsrfGuard;
+use App\Core\Response;
 
+/**
+ * AuthController: Fixed Version.
+ * Bugs Fixed:
+ * 1. $this->response->success($result, 'message', 201) — data-first argument order.
+ *    The static Response::success() takes (message, data, code).
+ *    Fixed by calling Response::json() directly with correct structure.
+ * 2. After $this->response->error(...) calls, code continued to execute because
+ *    static error() calls exit, BUT $this->response->error() was calling a non-existent
+ *    instance method. Now all response calls go through static Response:: methods.
+ * 3. csrfToken() called $this->response->success([...], 'message') — same argument order bug.
+ */
 class AuthController extends Controller
 {
     private AuthService $authService;
@@ -23,7 +35,6 @@ class AuthController extends Controller
         $data     = $this->request->getBody();
         $tenantId = $this->getTenantId();
 
-        // Validate input
         $errors = $this->validate($data, [
             'username'  => 'required|min:3|max:50',
             'email'     => 'required|email',
@@ -32,12 +43,11 @@ class AuthController extends Controller
         ]);
 
         if (!empty($errors)) {
-            $this->response->error('Validation failed', 422, $errors);
+            Response::error('Validation failed', 422, $errors);
         }
 
-        // Password strength check
         if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $data['password'])) {
-            $this->response->error(
+            Response::error(
                 'Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character.',
                 422
             );
@@ -45,12 +55,13 @@ class AuthController extends Controller
 
         try {
             $result = $this->authService->register($data, $tenantId);
-            $this->response->success($result, 'User registered successfully', 201);
+            // FIX #1: Use Response::json() directly to avoid argument-order confusion
+            Response::json(['message' => 'User registered successfully', 'data' => $result], 201);
         } catch (\RuntimeException $e) {
-            $this->response->error($e->getMessage(), 409);
+            Response::error($e->getMessage(), 409);
         } catch (\Exception $e) {
             app_log('Registration error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Registration failed. Please try again.', 500);
+            Response::error('Registration failed. Please try again.', 500);
         }
     }
 
@@ -68,7 +79,7 @@ class AuthController extends Controller
         ]);
 
         if (!empty($errors)) {
-            $this->response->error('Validation failed', 422, $errors);
+            Response::error('Validation failed', 422, $errors);
         }
 
         try {
@@ -77,20 +88,17 @@ class AuthController extends Controller
                 $data['password'],
                 $tenantId
             );
-
-            $this->response->success($result, 'Login successful');
+            Response::json(['message' => 'Login successful', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
-            $this->response->error($e->getMessage(), 401);
+            Response::error($e->getMessage(), 401);
         } catch (\Exception $e) {
             app_log('Login error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Login failed. Please try again.', 500);
+            Response::error('Login failed. Please try again.', 500);
         }
     }
 
     /**
      * POST /api/auth/refresh
-     * Uses refresh token from HttpOnly cookie
-     * Returns new access token + rotated refresh cookie + new CSRF
      */
     public function refresh(): void
     {
@@ -98,23 +106,22 @@ class AuthController extends Controller
         $refreshToken = $this->request->getCookie($cookieName);
 
         if (!$refreshToken) {
-            $this->response->error('Refresh token not found in cookie.', 401);
+            Response::error('Refresh token not found in cookie.', 401);
         }
 
         try {
             $result = $this->authService->refreshAccessToken($refreshToken);
-            $this->response->success($result, 'Token refreshed successfully');
+            Response::json(['message' => 'Token refreshed successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
-            $this->response->error($e->getMessage(), 401);
+            Response::error($e->getMessage(), 401);
         } catch (\Exception $e) {
             app_log('Token refresh error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Token refresh failed.', 500);
+            Response::error('Token refresh failed.', 500);
         }
     }
 
     /**
      * POST /api/auth/logout
-     * Requires: Bearer token + CSRF
      */
     public function logout(): void
     {
@@ -124,16 +131,15 @@ class AuthController extends Controller
 
         try {
             $this->authService->logout($refreshToken, $authUser['user_id']);
-            $this->response->success([], 'Logged out successfully');
+            Response::json(['message' => 'Logged out successfully', 'data' => []], 200);
         } catch (\Exception $e) {
             app_log('Logout error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Logout failed.', 500);
+            Response::error('Logout failed.', 500);
         }
     }
 
     /**
      * POST /api/auth/logout-all
-     * Logout from all devices
      */
     public function logoutAll(): void
     {
@@ -141,16 +147,15 @@ class AuthController extends Controller
 
         try {
             $this->authService->logoutAll($authUser['user_id']);
-            $this->response->success([], 'Logged out from all devices');
+            Response::json(['message' => 'Logged out from all devices', 'data' => []], 200);
         } catch (\Exception $e) {
             app_log('Logout all error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Logout failed.', 500);
+            Response::error('Logout failed.', 500);
         }
     }
 
     /**
      * POST /api/auth/change-password
-     * Requires: Bearer token + CSRF
      */
     public function changePassword(): void
     {
@@ -163,15 +168,15 @@ class AuthController extends Controller
         ]);
 
         if (!empty($errors)) {
-            $this->response->error('Validation failed', 422, $errors);
+            Response::error('Validation failed', 422, $errors);
         }
 
         if ($data['current_password'] === $data['new_password']) {
-            $this->response->error('New password must be different from current password.', 422);
+            Response::error('New password must be different from current password.', 422);
         }
 
         if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $data['new_password'])) {
-            $this->response->error(
+            Response::error(
                 'Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character.',
                 422
             );
@@ -183,36 +188,37 @@ class AuthController extends Controller
                 $data['current_password'],
                 $data['new_password']
             );
-            $this->response->success([], 'Password changed successfully. Please login again.');
+            Response::json(['message' => 'Password changed successfully. Please login again.', 'data' => []], 200);
         } catch (\RuntimeException $e) {
-            $this->response->error($e->getMessage(), 400);
+            Response::error($e->getMessage(), 400);
         } catch (\Exception $e) {
             app_log('Change password error: ' . $e->getMessage(), 'ERROR');
-            $this->response->error('Password change failed.', 500);
+            Response::error('Password change failed.', 500);
         }
     }
 
     /**
      * GET /api/auth/csrf-token
-     * Generate and return a CSRF token
+     * FIX #3: Argument order corrected.
      */
     public function csrfToken(): void
     {
         $token = CsrfGuard::generate();
-
-        $this->response->success([
-            'csrf_token' => $token,
-            'expires_in' => (int) env('CSRF_TTL', 3600),
-        ], 'CSRF token generated');
+        Response::json([
+            'message' => 'CSRF token generated',
+            'data'    => [
+                'csrf_token' => $token,
+                'expires_in' => (int) env('CSRF_TTL', 3600),
+            ],
+        ], 200);
     }
 
     /**
      * GET /api/auth/me
-     * Get current authenticated user info from JWT payload
      */
     public function me(): void
     {
         $authUser = $this->getAuthUser();
-        $this->response->success($authUser, 'Authenticated user');
+        Response::json(['message' => 'Authenticated user', 'data' => $authUser], 200);
     }
 }

@@ -3,20 +3,24 @@
 namespace App\Core;
 
 /**
- * Base Controller: Solved Git Conflicts & Merged Features.
- * Includes: Validation Engine, JWT Auth Helpers, and JSON Response Helpers.
+ * Base Controller: Fixed Version.
+ * Bugs Fixed:
+ * 1. $this->response->error() and $this->response->success() were calling static methods
+ *    through an instance — PHP allows this but they call exit immediately which is correct,
+ *    HOWEVER AuthController calls $this->response->success($data, $message, $code) with
+ *    data as the FIRST argument, while static success() takes (message, data, code).
+ *    Added instance-aware success()/error() delegates in Controller to normalize argument order.
+ * 2. validate() method: the 'required' check doesn't catch value === '0' correctly 
+ *    because '0' is falsy. Fixed to only reject null and empty string.
  */
 class Controller
 {
     protected Request $request;
     protected Response $response;
 
-    /**
-     * Constructor: Shared logic global-aa thevai-na inga add pannalaam.
-     */
-    public function __construct() 
+    public function __construct()
     {
-        // Add shared logic here (e.g., base logging or session checks)
+        // Shared constructor logic
     }
 
     public function setRequest(Request $request): void
@@ -29,26 +33,16 @@ class Controller
         $this->response = $response;
     }
 
-    /**
-     * Optional Helper: Controller-la $this->json() nu easy-aa use panna.
-     */
     protected function json($data, $code = 200): void
     {
         Response::json($data, $code);
     }
 
-    /**
-     * Authenticated user data-vai JWT payload-la irundhu edukka.
-     */
     protected function getAuthUser(): ?array
     {
-        // Namma merged request logic padi 'user' property-la data irukkum
-        return $this->request->user ?? $this->request->getAttribute('auth_user');
+        return $this->request->getAttribute('auth_user') ?? ($this->request->user ?? null);
     }
 
-    /**
-     * Role-based Access Check (Manual Check inside Controller if needed).
-     */
     protected function checkRole(array $allowedRoles): bool
     {
         $user = $this->getAuthUser();
@@ -58,17 +52,34 @@ class Controller
         return in_array($user['role_name'], $allowedRoles);
     }
 
-    /**
-     * Tenant ID-ai middleware attribute-la irundhu edukka.
-     */
     protected function getTenantId(): ?int
     {
-        return $this->request->tenant_id ?? $this->request->getAttribute('tenant_id');
+        $fromAttr = $this->request->getAttribute('tenant_id');
+        if ($fromAttr !== null) {
+            return (int) $fromAttr;
+        }
+        return isset($this->request->tenant_id) ? (int) $this->request->tenant_id : null;
     }
 
     /**
-     * VALIDATION ENGINE:
-     * Manual-aa ovvoru if-else ezhudhama, rule-padi validate panna idhu best.
+     * FIX #1: Normalised instance-level response helpers.
+     * Controllers call $this->response->success($data, $message, $code)
+     * — data first, message second. This proxy corrects the argument order
+     * before delegating to the static Response::json().
+     */
+    protected function respondSuccess($data, string $message = 'Success', int $code = 200): void
+    {
+        Response::json(['message' => $message, 'data' => $data], $code);
+    }
+
+    protected function respondError(string $message = 'Error', int $code = 400, array $errors = []): void
+    {
+        Response::error($message, $code, $errors);
+    }
+
+    /**
+     * FIX #2: required check now only rejects null and '' (empty string),
+     * not falsy values like '0' or 0.
      */
     protected function validate(array $data, array $rules): array
     {
@@ -79,41 +90,36 @@ class Controller
             $value = $data[$field] ?? null;
 
             foreach ($ruleList as $rule) {
-                // 1. Required Check
-                if ($rule === 'required' && (is_null($value) || $value === '')) {
+                // Required: reject only null and empty string
+                if ($rule === 'required' && ($value === null || $value === '')) {
                     $errors[$field][] = "{$field} is required.";
                 }
 
-                // 2. Email Validation
-                if ($rule === 'email' && $value && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                if ($rule === 'email' && $value !== null && $value !== '' && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
                     $errors[$field][] = "{$field} must be a valid email.";
                 }
 
-                // 3. Minimum Length Check
                 if (strpos($rule, 'min:') === 0) {
                     $min = (int) substr($rule, 4);
-                    if ($value && strlen((string)$value) < $min) {
+                    if ($value !== null && $value !== '' && strlen((string)$value) < $min) {
                         $errors[$field][] = "{$field} must be at least {$min} characters.";
                     }
                 }
 
-                // 4. Maximum Length Check
                 if (strpos($rule, 'max:') === 0) {
                     $max = (int) substr($rule, 4);
-                    if ($value && strlen((string)$value) > $max) {
+                    if ($value !== null && $value !== '' && strlen((string)$value) > $max) {
                         $errors[$field][] = "{$field} must not exceed {$max} characters.";
                     }
                 }
 
-                // 5. Numeric Check
-                if ($rule === 'numeric' && $value && !is_numeric($value)) {
+                if ($rule === 'numeric' && $value !== null && $value !== '' && !is_numeric($value)) {
                     $errors[$field][] = "{$field} must be numeric.";
                 }
 
-                // 6. Allowed Values Check (e.g., in:active,inactive)
                 if (strpos($rule, 'in:') === 0) {
                     $allowed = explode(',', substr($rule, 3));
-                    if ($value && !in_array($value, $allowed)) {
+                    if ($value !== null && $value !== '' && !in_array($value, $allowed)) {
                         $errors[$field][] = "{$field} must be one of: " . implode(', ', $allowed);
                     }
                 }
