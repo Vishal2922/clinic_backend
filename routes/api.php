@@ -98,7 +98,7 @@ $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]],
 
 <?php
 // ═══════════════════════════════════════════════════════════
-//  MODULE 7: CALENDAR API
+//  MODULE 10: CALENDAR API
 //  Supports: single date, date range, tooltip detail,
 //            doctor schedule, monthly summary.
 //  Roles: All clinic staff (Admin, Provider, Nurse, Receptionist)
