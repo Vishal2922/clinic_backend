@@ -59,7 +59,7 @@ $router->group(['prefix' => '/api/auth', 'middleware' => [$tenant]], function ($
     $router->get('/csrf-token', [AuthController::class, 'csrfToken']);
 
     // Protected
-    $router->get('/me',     [AuthController::class, 'me'],     [$auth, $allAuthenticated]);
+    $router->get('/me',      [AuthController::class, 'me'],     [$auth, $allAuthenticated]);
     $router->post('/logout', [AuthController::class, 'logout'], [$auth, $csrf]);
 });
 
@@ -113,10 +113,17 @@ $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]],
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/communication', 'middleware' => [$tenant, $auth, $providerNurse]], function ($router) use ($csrf) {
 
+    // Get notes for an appointment (role-visibility filtered + decrypted)
     $router->get('/appointments/{id}/notes',         [NoteController::class, 'index']);
-    $router->post('/appointments/{id}/notes',        [NoteController::class, 'store'], [$csrf]);
+
+    // Create a new encrypted note for an appointment
+    $router->post('/appointments/{id}/notes',        [NoteController::class, 'store'],   [$csrf]);
+
+    // Paginated message history for an appointment
     $router->get('/appointments/{id}/notes/history', [NoteController::class, 'history']);
-    $router->delete('/notes/{id}',                   [NoteController::class, 'destroy']);
+
+    // Soft-delete a note (author only)
+    $router->delete('/notes/{id}',                   [NoteController::class, 'destroy'], [$csrf]);
 });
 
 
@@ -167,11 +174,9 @@ $router->group(['prefix' => '/api/calendar', 'middleware' => [$tenant, $auth]], 
 $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated, $adminOnly, $csrf) {
 
     $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
-
-    $router->post('/logout',          [SettingsController::class, 'logout'],       [$allAuthenticated, $csrf]);
-    $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],    [$allAuthenticated, $csrf]);
-
-    $router->post('/rotate-tokens',   [SettingsController::class, 'rotateTokens'], [$allAuthenticated]);
+    $router->post('/logout',          [SettingsController::class, 'logout'],         [$allAuthenticated, $csrf]);
+    $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],      [$allAuthenticated, $csrf]);
+    $router->post('/rotate-tokens',   [SettingsController::class, 'rotateTokens'],   [$allAuthenticated]);
 
     $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'], [$allAuthenticated]);
 

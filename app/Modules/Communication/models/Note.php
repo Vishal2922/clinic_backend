@@ -5,11 +5,13 @@ namespace App\Modules\Communication\Models;
 use App\Core\Database;
 
 /**
- * Note Model
+ * Note Model — FIXED
  *
- * Handles encrypted appointment-based notes/messages.
- * Message content is stored encrypted via CryptoService.
- * Role-based visibility is enforced at the controller layer.
+ * BUG FIXED:
+ *   All three queries joined `roles r` and selected `r.name AS author_role`,
+ *   but the `roles` table column is `role_name`, not `name`.
+ *   This caused a SQL error: "Unknown column 'r.name' in 'field list'".
+ *   Fixed: changed `r.name` → `r.role_name` in all three queries.
  */
 class Note
 {
@@ -22,11 +24,12 @@ class Note
 
     /**
      * Find a single note by ID within a tenant.
+     * FIX: r.name → r.role_name
      */
     public function findById(int $id, int $tenantId): ?array
     {
         return $this->db->fetch(
-            'SELECT n.*, u.username AS author_name, r.name AS author_role
+            'SELECT n.*, u.username AS author_name, r.role_name AS author_role
              FROM appointment_notes n
              LEFT JOIN users u ON n.author_id = u.id
              LEFT JOIN roles r ON u.role_id = r.id
@@ -37,7 +40,7 @@ class Note
 
     /**
      * Get all notes for a specific appointment.
-     * Optionally filter by visible_to_role.
+     * FIX: r.name → r.role_name
      */
     public function getByAppointment(int $appointmentId, int $tenantId, ?string $roleFilter = null): array
     {
@@ -50,7 +53,7 @@ class Note
         }
 
         return $this->db->fetchAll(
-            "SELECT n.*, u.username AS author_name, r.name AS author_role
+            "SELECT n.*, u.username AS author_name, r.role_name AS author_role
              FROM appointment_notes n
              LEFT JOIN users u ON n.author_id = u.id
              LEFT JOIN roles r ON u.role_id = r.id
@@ -62,6 +65,7 @@ class Note
 
     /**
      * Get message history for an appointment (paginated).
+     * FIX: r.name → r.role_name
      */
     public function getHistory(int $appointmentId, int $tenantId, int $page = 1, int $perPage = 20): array
     {
@@ -76,7 +80,7 @@ class Note
         $total = (int) ($countResult['total'] ?? 0);
 
         $notes = $this->db->fetchAll(
-            'SELECT n.*, u.username AS author_name, r.name AS author_role
+            'SELECT n.*, u.username AS author_name, r.role_name AS author_role
              FROM appointment_notes n
              LEFT JOIN users u ON n.author_id = u.id
              LEFT JOIN roles r ON u.role_id = r.id
