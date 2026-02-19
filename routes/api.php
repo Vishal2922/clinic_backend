@@ -102,16 +102,16 @@ $providerNurse = AuthorizeRole::class . ':Provider,Nurse';
 
 $router->group(['prefix' => '/api/communication', 'middleware' => [$tenant, $auth, $providerNurse]], function ($router) use ($csrf) {
     // Get notes for an appointment (role-visibility filtered + decrypted)
-    $router->get('/appointments/{id}/notes',          [NoteController::class, 'index']);
+    $router->get('/appointments/{id}/notes',         [NoteController::class, 'index']);
 
     // Create a new encrypted note for an appointment
-    $router->post('/appointments/{id}/notes',         [NoteController::class, 'store'],   [$csrf]);
+    $router->post('/appointments/{id}/notes',        [NoteController::class, 'store'],   [$csrf]);
 
     // Paginated message history for an appointment
-    $router->get('/appointments/{id}/notes/history',  [NoteController::class, 'history']);
+    $router->get('/appointments/{id}/notes/history', [NoteController::class, 'history']);
 
     // Soft-delete a note (author only)
-    $router->delete('/notes/{id}',                    [NoteController::class, 'destroy']);
+    $router->delete('/notes/{id}',                   [NoteController::class, 'destroy'], [$csrf]);
 });
 
 // ═══════════════════════════════════════════════════════════
