@@ -92,3 +92,56 @@ $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $aut
 $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
     $router->get('/stats',  [DashboardController::class, 'index'], [$staff]);
 });
+
+
+
+
+<?php
+// ═══════════════════════════════════════════════════════════
+//  MODULE 7: CALENDAR API
+//  Supports: single date, date range, tooltip detail,
+//            doctor schedule, monthly summary.
+//  Roles: All clinic staff (Admin, Provider, Nurse, Receptionist)
+// ═══════════════════════════════════════════════════════════
+
+// ADD THIS USE STATEMENT at the top of routes/api.php
+// with the other use statements:
+//
+//   use App\Modules\Calendar\Controllers\CalendarController;
+
+$router->group(['prefix' => '/api/calendar', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff) {
+
+    /**
+     * GET /api/calendar/events?date=YYYY-MM-DD[&status=...][&doctor_id=...]
+     * Returns all appointments on a specific calendar date.
+     * Supports status and doctor_id filters.
+     */
+    $router->get('/events', [CalendarController::class, 'getByDate'], [$clinicStaff]);
+
+    /**
+     * GET /api/calendar/range?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD[&status=...][&doctor_id=...]
+     * Returns events within a date range (max 90 days).
+     * Response includes both a flat list and a by_date grouped map.
+     */
+    $router->get('/range', [CalendarController::class, 'getByRange'], [$clinicStaff]);
+
+    /**
+     * GET /api/calendar/tooltip/{id}
+     * Returns rich tooltip detail for a single appointment:
+     * patient contact info, doctor info, reason, status, prescription count.
+     */
+    $router->get('/tooltip/{id}', [CalendarController::class, 'getTooltip'], [$clinicStaff]);
+
+    /**
+     * GET /api/calendar/doctor/{id}?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     * Returns a specific doctor's appointments grouped by date.
+     */
+    $router->get('/doctor/{id}', [CalendarController::class, 'getDoctorSchedule'], [$clinicStaff]);
+
+    /**
+     * GET /api/calendar/monthly?year=YYYY&month=M
+     * Returns per-day appointment counts for a full month.
+     * Used for dot/badge indicators on monthly calendar grid views.
+     */
+    $router->get('/monthly', [CalendarController::class, 'getMonthlySummary'], [$clinicStaff]);
+});
