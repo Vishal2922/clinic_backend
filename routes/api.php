@@ -11,6 +11,8 @@ use App\Modules\Prescriptions\Controllers\PrescriptionController;
 use App\Modules\ReportsDashboard\Controllers\DashboardController;
 use App\Modules\Patients\Controllers\PatientController;
 use App\Modules\Appointments\Controllers\AppointmentController;
+use App\Modules\Staff\Controllers\StaffController;
+use App\Modules\SettingsSecurity\Controllers\SettingsController;
 
 /**
  * 1. Middleware Definitions
@@ -91,4 +93,47 @@ $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $aut
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
     $router->get('/stats',  [DashboardController::class, 'index'], [$staff]);
+});
+
+
+// ═══════════════════════════════════════════════════════════
+// MODULE 9: STAFF MANAGEMENT
+// Access: Admin only
+// ═══════════════════════════════════════════════════════════
+$router->group(['prefix' => '/api/staff', 'middleware' => [$tenant, $auth]], function ($router) use ($adminOnly, $csrf) {
+    // GET departments must be registered BEFORE /{id} to avoid route conflict
+    $router->get('/departments', [StaffController::class, 'departments'], [$adminOnly]);
+    $router->get('/',            [StaffController::class, 'index'],       [$adminOnly]);
+    $router->get('/{id}',        [StaffController::class, 'show'],        [$adminOnly]);
+    $router->post('/',           [StaffController::class, 'store'],       [$adminOnly, $csrf]);
+    $router->put('/{id}',        [StaffController::class, 'update'],      [$adminOnly, $csrf]);
+    $router->delete('/{id}',     [StaffController::class, 'destroy'],     [$adminOnly]);
+});
+
+// ═══════════════════════════════════════════════════════════
+// MODULE 11: SETTINGS & SECURITY
+// Access: All authenticated users (audit log = Admin only)
+// ═══════════════════════════════════════════════════════════
+$router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated, $adminOnly, $csrf) {
+
+    // Password management — all authenticated users
+    $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
+
+    // Session management — all authenticated users
+    $router->post('/logout',          [SettingsController::class, 'logout'],            [$allAuthenticated, $csrf]);
+    $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],         [$allAuthenticated, $csrf]);
+
+    // Token rotation — all authenticated users
+    $router->post('/rotate-tokens',   [SettingsController::class, 'rotateTokens'],      [$allAuthenticated]);
+
+    // CSRF regeneration — all authenticated users
+    $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'],    [$allAuthenticated]);
+
+    // Session viewing/invalidation — all authenticated users
+    $router->get('/sessions',         [SettingsController::class, 'listSessions'],      [$allAuthenticated]);
+    $router->delete('/sessions/{id}', [SettingsController::class, 'invalidateSession'], [$allAuthenticated]);
+
+    // Audit log — Admin only
+    $router->get('/audit-log',         [SettingsController::class, 'auditLog'],    [$adminOnly]);
+    $router->get('/audit-log/actions', [SettingsController::class, 'auditActions'], [$adminOnly]);
 });
