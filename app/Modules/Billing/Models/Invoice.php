@@ -1,42 +1,33 @@
 <?php
-
 namespace App\Modules\Billing\Models;
 
 use App\Core\Database;
+use App\Core\Security\CryptoService;
 
-/**
- * Invoice Model
- *
- * Handles invoices and payment records within tenant scope.
- */
 class Invoice
 {
     private Database $db;
+    private CryptoService $crypto;
 
     public function __construct()
     {
         $this->db = Database::getInstance();
+        $this->crypto = new CryptoService();
     }
 
-    /**
-     * Find an invoice by ID within a tenant.
-     */
     public function findById(int $id, int $tenantId): ?array
     {
-        return $this->db->fetch(
-            'SELECT i.*, p.name AS patient_name, u.username AS provider_name
+        $invoice = $this->db->fetch(
+            'SELECT i.*, p.encrypted_name AS enc_patient_name, u.username AS provider_name
              FROM invoices i
              LEFT JOIN patients p ON i.patient_id = p.id
              LEFT JOIN users u ON i.provider_id = u.id
              WHERE i.id = :id AND i.tenant_id = :tid AND i.deleted_at IS NULL',
             ['id' => $id, 'tid' => $tenantId]
         );
+        return $invoice ? $this->decryptInvoice($invoice) : null;
     }
 
-    /**
-     * Get all invoices for a tenant with optional filters.
-     * Filterable by: patient_id, status.
-     */
     public function getAllByTenant(
         int $tenantId,
         ?int $patientId = null,
@@ -45,17 +36,16 @@ class Invoice
         int $perPage = 15
     ): array {
         $offset = ($page - 1) * $perPage;
-        $where  = 'i.tenant_id = :tid AND i.deleted_at IS NULL';
+        $where = 'i.tenant_id = :tid AND i.deleted_at IS NULL';
         $params = ['tid' => $tenantId];
 
         if ($patientId) {
-            $where                .= ' AND i.patient_id = :patient_id';
-            $params['patient_id']  = $patientId;
+            $where .= ' AND i.patient_id = :patient_id';
+            $params['patient_id'] = $patientId;
         }
-
         if ($status) {
-            $where            .= ' AND i.status = :status';
-            $params['status']  = $status;
+            $where .= ' AND i.status = :status';
+            $params['status'] = $status;
         }
 
         $countResult = $this->db->fetch(
@@ -65,7 +55,7 @@ class Invoice
         $total = (int) ($countResult['total'] ?? 0);
 
         $invoices = $this->db->fetchAll(
-            "SELECT i.*, p.name AS patient_name, u.username AS provider_name
+            "SELECT i.*, p.encrypted_name AS enc_patient_name, u.username AS provider_name
              FROM invoices i
              LEFT JOIN patients p ON i.patient_id = p.id
              LEFT JOIN users u ON i.provider_id = u.id
@@ -75,8 +65,10 @@ class Invoice
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])
         );
 
+        $invoices = array_map([$this, 'decryptInvoice'], $invoices);
+
         return [
-            'invoices'   => $invoices,
+            'invoices' => $invoices,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,
@@ -86,18 +78,15 @@ class Invoice
         ];
     }
 
-    /**
-     * Create a new invoice.
-     */
     public function create(array $data): int
     {
         return $this->db->insert(
             'INSERT INTO invoices
-                (tenant_id, patient_id, provider_id, appointment_id, invoice_number,
-                 amount, tax, total_amount, status, due_date, notes, created_at, updated_at)
+             (tenant_id, patient_id, provider_id, appointment_id, invoice_number,
+              amount, tax, total_amount, status, due_date, encrypted_notes, created_at, updated_at)
              VALUES
-                (:tenant_id, :patient_id, :provider_id, :appointment_id, :invoice_number,
-                 :amount, :tax, :total_amount, :status, :due_date, :notes, NOW(), NOW())',
+             (:tenant_id, :patient_id, :provider_id, :appointment_id, :invoice_number,
+              :amount, :tax, :total_amount, :status, :due_date, :enc_notes, NOW(), NOW())',
             [
                 'tenant_id'      => $data['tenant_id'],
                 'patient_id'     => $data['patient_id'],
@@ -109,14 +98,11 @@ class Invoice
                 'total_amount'   => $data['total_amount'],
                 'status'         => $data['status'] ?? 'pending',
                 'due_date'       => $data['due_date'] ?? null,
-                'notes'          => $data['notes'] ?? null,
+                'enc_notes'      => isset($data['notes']) ? $this->crypto->encrypt($data['notes']) : null,
             ]
         );
     }
 
-    /**
-     * Update payment status of an invoice.
-     */
     public function updateStatus(int $id, int $tenantId, string $status, ?string $paidAt = null): bool
     {
         $affected = $this->db->execute(
@@ -128,9 +114,6 @@ class Invoice
         return $affected > 0;
     }
 
-    /**
-     * Soft delete an invoice (Admin only).
-     */
     public function softDelete(int $id, int $tenantId): bool
     {
         $affected = $this->db->execute(
@@ -140,17 +123,14 @@ class Invoice
         return $affected > 0;
     }
 
-    /**
-     * Get pending/paid summary for a tenant.
-     */
     public function getSummary(int $tenantId): array
     {
         $result = $this->db->fetch(
             "SELECT
                 COUNT(*) AS total_invoices,
-                SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending_count,
-                SUM(CASE WHEN status = 'paid'      THEN 1 ELSE 0 END) AS paid_count,
-                SUM(CASE WHEN status = 'overdue'   THEN 1 ELSE 0 END) AS overdue_count,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+                SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdue_count,
                 SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
                 COALESCE(SUM(total_amount), 0) AS total_billed,
                 COALESCE(SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END), 0) AS total_collected,
@@ -159,17 +139,15 @@ class Invoice
              WHERE tenant_id = :tid AND deleted_at IS NULL",
             ['tid' => $tenantId]
         );
-
         return $result ?? [];
     }
 
     /**
-     * Generate a unique invoice number for the tenant.
-     * Format: INV-{tenantId}-{YYYYMMDD}-{sequence}
+     * FIX: Safe invoice number generation using fetch() instead of fetchColumn()
      */
     public function generateInvoiceNumber(int $tenantId): string
     {
-        $date   = date('Ymd');
+        $date = date('Ymd');
         $prefix = "INV-{$tenantId}-{$date}-";
 
         $result = $this->db->fetch(
@@ -180,5 +158,22 @@ class Invoice
 
         $seq = (int) ($result['seq'] ?? 0) + 1;
         return $prefix . str_pad((string) $seq, 4, '0', STR_PAD_LEFT);
+    }
+
+    private function decryptInvoice(array $invoice): array
+    {
+        try {
+            if (!empty($invoice['encrypted_notes'])) {
+                $invoice['notes'] = $this->crypto->decrypt($invoice['encrypted_notes']);
+            }
+            if (!empty($invoice['enc_patient_name'])) {
+                $invoice['patient_name'] = $this->crypto->decrypt($invoice['enc_patient_name']);
+            }
+        } catch (\Exception $e) {
+            $invoice['notes'] = '[encrypted]';
+            app_log('Invoice decrypt error: ' . $e->getMessage(), 'ERROR');
+        }
+        unset($invoice['encrypted_notes'], $invoice['enc_patient_name']);
+        return $invoice;
     }
 }
