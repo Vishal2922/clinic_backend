@@ -1,54 +1,37 @@
 <?php
-
 namespace App\Modules\Appointments\Models;
 
 use App\Core\Database;
+use App\Core\Security\CryptoService;
 
-/**
- * Appointment Model: Fixed Version.
- *
- * CRITICAL BUG: Original used Laravel Eloquent (extends Model, use SoftDeletes,
- * Carbon, Illuminate\Database\Eloquent\Builder) — none of which exist in this framework.
- *
- * Bugs Fixed:
- * 1. Replaced Eloquent with custom PDO Database singleton model.
- * 2. Implemented all methods needed by AppointmentController and SchedulingService.
- * 3. doctor() relationship used `App\Models\User` (wrong namespace) — the correct
- *    namespace in this project is `App\Modules\UsersRoles\Models\User`.
- * 4. SoftDeletes trait doesn't exist — implemented manual soft-delete via deleted_at column.
- * 5. getTimeFormattedAttribute() — Eloquent accessor doesn't work here; removed.
- */
 class Appointment
 {
     private Database $db;
+    private CryptoService $crypto;
 
     public function __construct()
     {
         $this->db = Database::getInstance();
+        $this->crypto = new CryptoService();
     }
 
-    /**
-     * Find appointment by ID within a tenant.
-     */
     public function findById(int $id, int $tenantId): ?array
     {
-        return $this->db->fetch(
-            'SELECT a.*, p.name as patient_name, u.username as doctor_name
+        $row = $this->db->fetch(
+            'SELECT a.*, p.encrypted_name as enc_patient_name, u.username as doctor_name
              FROM appointments a
              LEFT JOIN patients p ON a.patient_id = p.id
              LEFT JOIN users u ON a.doctor_id = u.id
              WHERE a.id = :id AND a.tenant_id = :tid AND a.deleted_at IS NULL',
             ['id' => $id, 'tid' => $tenantId]
         );
+        return $row ? $this->decryptAppointment($row) : null;
     }
 
-    /**
-     * Get all appointments for a tenant, optionally filtered by status.
-     */
     public function getAllByTenant(int $tenantId, ?string $status = null, int $page = 1, int $perPage = 15): array
     {
         $offset = ($page - 1) * $perPage;
-        $where  = 'a.tenant_id = :tid AND a.deleted_at IS NULL';
+        $where = 'a.tenant_id = :tid AND a.deleted_at IS NULL';
         $params = ['tid' => $tenantId];
 
         if ($status) {
@@ -63,7 +46,7 @@ class Appointment
         $total = (int) ($countResult['total'] ?? 0);
 
         $appointments = $this->db->fetchAll(
-            "SELECT a.*, p.name as patient_name, u.username as doctor_name
+            "SELECT a.*, p.encrypted_name as enc_patient_name, u.username as doctor_name
              FROM appointments a
              LEFT JOIN patients p ON a.patient_id = p.id
              LEFT JOIN users u ON a.doctor_id = u.id
@@ -73,9 +56,11 @@ class Appointment
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])
         );
 
+        $appointments = array_map([$this, 'decryptAppointment'], $appointments);
+
         return [
             'appointments' => $appointments,
-            'pagination'   => [
+            'pagination' => [
                 'total'       => $total,
                 'page'        => $page,
                 'per_page'    => $perPage,
@@ -84,28 +69,22 @@ class Appointment
         ];
     }
 
-    /**
-     * Create a new appointment.
-     */
     public function create(array $data): int
     {
         return $this->db->insert(
-            'INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, reason, status, created_at, updated_at)
-             VALUES (:tenant_id, :patient_id, :doctor_id, :appointment_time, :reason, :status, NOW(), NOW())',
+            'INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, encrypted_reason, status, created_at, updated_at)
+             VALUES (:tenant_id, :patient_id, :doctor_id, :appointment_time, :enc_reason, :status, NOW(), NOW())',
             [
                 'tenant_id'        => $data['tenant_id'],
                 'patient_id'       => $data['patient_id'],
                 'doctor_id'        => $data['doctor_id'],
                 'appointment_time' => $data['appointment_time'],
-                'reason'           => $data['reason'] ?? null,
+                'enc_reason'       => isset($data['reason']) ? $this->crypto->encrypt($data['reason']) : null,
                 'status'           => $data['status'] ?? 'scheduled',
             ]
         );
     }
 
-    /**
-     * Update appointment status.
-     */
     public function updateStatus(int $id, int $tenantId, string $status): bool
     {
         $affected = $this->db->execute(
@@ -116,9 +95,6 @@ class Appointment
         return $affected > 0;
     }
 
-    /**
-     * Soft delete an appointment.
-     */
     public function softDelete(int $id, int $tenantId): bool
     {
         $affected = $this->db->execute(
@@ -128,36 +104,49 @@ class Appointment
         return $affected > 0;
     }
 
-    /**
-     * Get booked appointments for a doctor on a specific date (for schedule generation).
-     */
     public function getBookedSlotsForDoctor(int $doctorId, string $date): array
     {
         return $this->db->fetchAll(
-            'SELECT appointment_time FROM appointments
+            "SELECT appointment_time FROM appointments
              WHERE doctor_id = :did AND DATE(appointment_time) = :date
-               AND status IN (\'scheduled\', \'arrived\') AND deleted_at IS NULL',
+             AND status IN ('scheduled', 'arrived') AND deleted_at IS NULL",
             ['did' => $doctorId, 'date' => $date]
         );
     }
 
-    /**
-     * Check for conflicting appointments for a doctor in a time window.
-     */
     public function hasConflict(int $doctorId, string $startTime, string $endTime): bool
     {
         $result = $this->db->fetch(
-            'SELECT COUNT(*) as count FROM appointments
+            "SELECT COUNT(*) as count FROM appointments
              WHERE doctor_id = :did
-               AND status IN (\'scheduled\', \'arrived\', \'in-consultation\')
-               AND deleted_at IS NULL
-               AND (
-                   (appointment_time >= :start AND appointment_time < :end)
-                   OR (appointment_time <= :start2 AND DATE_ADD(appointment_time, INTERVAL 30 MINUTE) > :start3)
-               )',
+             AND status IN ('scheduled', 'arrived', 'in-consultation')
+             AND deleted_at IS NULL
+             AND (
+                 (appointment_time >= :start AND appointment_time < :end)
+                 OR (appointment_time <= :start2 AND DATE_ADD(appointment_time, INTERVAL 30 MINUTE) > :start3)
+             )",
             ['did' => $doctorId, 'start' => $startTime, 'end' => $endTime,
              'start2' => $startTime, 'start3' => $startTime]
         );
         return (int) ($result['count'] ?? 0) > 0;
+    }
+
+    private function decryptAppointment(array $row): array
+    {
+        try {
+            if (!empty($row['encrypted_reason'])) {
+                $row['reason'] = $this->crypto->decrypt($row['encrypted_reason']);
+            } else {
+                $row['reason'] = null;
+            }
+            if (!empty($row['enc_patient_name'])) {
+                $row['patient_name'] = $this->crypto->decrypt($row['enc_patient_name']);
+            }
+        } catch (\Exception $e) {
+            $row['reason'] = '[encrypted]';
+            app_log('Appointment decrypt error: ' . $e->getMessage(), 'ERROR');
+        }
+        unset($row['encrypted_reason'], $row['enc_patient_name']);
+        return $row;
     }
 }

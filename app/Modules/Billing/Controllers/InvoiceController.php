@@ -116,8 +116,27 @@ class InvoiceController extends Controller
             Response::error('Amount must be greater than zero.', 422);
         }
 
+        // FIX: Use the correct variable $user instead of undefined $authUser
+        // FIX: Use 'user_id' key which is what getAuthUser() returns
+        $providerId = $user['user_id'] ?? null;
+        
+        if (!$providerId) {
+            Response::error('Unable to identify provider. Please re-login.', 401);
+        }
+
+        // Verify the provider exists in users table
+        $db = \App\Core\Database::getInstance();
+        $providerExists = $db->fetch(
+            'SELECT id FROM users WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
+            ['id' => $providerId, 'tid' => $tenantId]
+        );
+
+        if (!$providerExists) {
+            Response::error('Provider not found. Please contact administrator.', 400);
+        }
+
         try {
-            $result  = $this->billingService->generateInvoice($data, $tenantId, (int) $user['id']);
+            $result  = $this->billingService->generateInvoice($data, $tenantId, (int) $providerId);
             $invoice = $this->invoiceModel->findById($result['id'], $tenantId);
 
             Response::json([
@@ -127,7 +146,7 @@ class InvoiceController extends Controller
 
         } catch (\Exception $e) {
             app_log('Generate invoice error: ' . $e->getMessage(), 'ERROR');
-            Response::error('Failed to generate invoice.', 500);
+            Response::error('Failed to generate invoice: ' . $e->getMessage(), 500);
         }
     }
 

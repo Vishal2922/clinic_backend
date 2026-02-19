@@ -40,10 +40,11 @@ $allAuthenticated = AuthorizeRole::class . ':Admin,Provider,Nurse,Patient,Pharma
 // HEALTH CHECK (Public)
 // ═══════════════════════════════════════════════════════════
 $router->get('/api/health', function ($request, $response) {
-    $response->json([
+    \App\Core\Response::json([
         'service'   => 'Clinic Management API',
         'status'    => 'running',
         'timestamp' => date('Y-m-d H:i:s'),
+        'hipaa'     => 'AES-256-CBC encryption enabled',
     ], 200);
 });
 
@@ -186,3 +187,5 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
     $router->get('/audit-log',         [SettingsController::class, 'auditLog'],     [$adminOnly]);
     $router->get('/audit-log/actions', [SettingsController::class, 'auditActions'], [$adminOnly]);
 });
+
+$router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);
