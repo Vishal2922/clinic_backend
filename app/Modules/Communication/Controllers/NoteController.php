@@ -71,8 +71,8 @@ class NoteController extends Controller
      *
      * Body params:
      *  - message         (required) plain-text message
-     *  - note_type       (optional) 'note' | 'instruction' | 'alert'   default: 'note'
-     *  - visible_to_role (optional) 'all' | 'provider' | 'nurse'       default: role-based
+     *  - note_type       (optional) 'note'|'clinical'|'provider_only'|'nurse'|'general'  default: 'note'
+     *  - visible_to_role (optional) 'all' | 'provider' | 'nurse'   default: role-based
      */
     public function store(Request $request, string $appointmentId): void
     {
@@ -82,11 +82,12 @@ class NoteController extends Controller
 
         $errors = $this->validate($data, [
             'message'   => 'required',
-            'note_type' => 'in:note,instruction,alert',
+            'note_type' => 'in:note,clinical,provider_only,nurse,general',
         ]);
 
         if (!empty($errors)) {
             Response::error('Validation failed.', 422, $errors);
+            return; // FIX: explicit return after error response
         }
 
         try {
@@ -97,10 +98,17 @@ class NoteController extends Controller
             );
             $encryptedMsg = $this->communicationService->encryptMessage($data['message']);
 
+            // JWT middleware stores user's primary key as 'user_id', not 'id'
+            $authorId = (int) ($user['user_id'] ?? 0);
+            if (!$authorId) {
+                Response::error('Unable to identify author. Please re-login.', 401);
+                return;
+            }
+
             $id = $this->noteModel->create([
                 'tenant_id'         => $tenantId,
                 'appointment_id'    => (int) $appointmentId,
-                'author_id'         => (int) $user['id'],
+                'author_id'         => $authorId,
                 'message_encrypted' => $encryptedMsg,
                 'note_type'         => $data['note_type'] ?? 'note',
                 'visible_to_role'   => $visibility,
@@ -159,23 +167,44 @@ class NoteController extends Controller
 
     /**
      * DELETE /api/communication/notes/{id}
-     * Soft-deletes a note. Only the original author can delete their note.
+     * Soft-deletes a note. Only the original author (or Admin) can delete.
+     *
+     * FIX: Author ownership check uses $user['user_id'] (set by AuthJWT middleware
+     * from JWT 'sub' claim). The old code used $user['id'] which is undefined in
+     * the auth_user array, so author_id check always failed -> 403 for everyone.
+     *
+     * FIX: Model's softDelete() no longer needs authorId param. Ownership is
+     * verified here in the controller before calling softDelete().
      */
     public function destroy(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
         $user     = $this->getAuthUser();
+        // FIX: use 'user_id' key, not 'id'
+        $userId   = (int) ($user['user_id'] ?? 0);
+        $userRole = $user['role_name'] ?? '';
 
         try {
             $note = $this->noteModel->findById((int) $id, $tenantId);
             if (!$note) {
                 Response::error('Note not found.', 404);
+                return;
             }
 
-            $deleted = $this->noteModel->softDelete((int) $id, $tenantId, (int) $user['id']);
+            // Only the author or an Admin may delete
+            $isAuthor = (int) $note['author_id'] === $userId;
+            $isAdmin  = $userRole === 'Admin';
+
+            if (!$isAuthor && !$isAdmin) {
+                Response::error('You are not authorised to delete this note.', 403);
+                return;
+            }
+
+            $deleted = $this->noteModel->softDelete((int) $id, $tenantId);
 
             if (!$deleted) {
-                Response::error('You are not authorised to delete this note.', 403);
+                Response::error('Failed to delete note.', 500);
+                return;
             }
 
             Response::json(['message' => 'Note deleted successfully.'], 200);

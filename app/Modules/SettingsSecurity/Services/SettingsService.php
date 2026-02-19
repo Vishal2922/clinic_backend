@@ -104,10 +104,10 @@ class SettingsService
 
         // Invalidate current PHP session
         if (session_status() === PHP_SESSION_ACTIVE) {
-            $sessionId = session_id();
-            if ($sessionId) {
-                $this->sessionModel->invalidate(0, $userId); // Mark by user
-            }
+            // FIX: invalidate(0, userId) always matched 0 rows because id=0 never exists.
+            // Use invalidateAllForUser() to properly mark all DB sessions as inactive,
+            // then regenerate the PHP session ID to prevent session fixation.
+            $this->sessionModel->invalidateAllForUser($userId);
             session_regenerate_id(true);
         }
 
@@ -133,14 +133,25 @@ class SettingsService
 
     /**
      * Rotate tokens: generate new access + refresh tokens, regenerate CSRF.
-     * Used when the client wants to proactively rotate for security.
+     *
+     * FIX: Removed $userId and $tenantId parameters.
+     * Previously the controller passed these from getAuthUser(), which required
+     * AuthJWT to have run — but AuthJWT requires a valid access token, creating
+     * a circular dependency (you need a valid token to get a new token).
+     * Now userId and tenantId are extracted from the validated refresh token
+     * DB record directly, exactly like AuthService::refreshAccessToken() does.
      */
-    public function rotateTokens(string $rawRefreshToken, int $userId, int $tenantId): array
+    public function rotateTokens(string $rawRefreshToken): array
     {
+        // Validate the refresh token — this IS the authentication for this endpoint
         $tokenRecord = $this->tokenService->validateRefreshToken($rawRefreshToken);
         if (!$tokenRecord) {
-            throw new \RuntimeException('Invalid or expired refresh token');
+            throw new \RuntimeException('Invalid or expired refresh token. Please log in again.');
         }
+
+        // FIX: Get userId and tenantId from the token record, not from JWT auth user
+        $userId   = (int) $tokenRecord['user_id'];
+        $tenantId = (int) $tokenRecord['tenant_id'];
 
         // Get fresh user data
         $user = $this->db->fetch(
@@ -190,7 +201,6 @@ class SettingsService
             'csrf_token'   => $rotationResult['csrf_token'],
         ];
     }
-
     /**
      * Regenerate CSRF token.
      */

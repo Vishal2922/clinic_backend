@@ -46,10 +46,12 @@ class SettingsController extends Controller
 
         if (!empty($errors)) {
             Response::error('Validation failed', 422, $errors);
+            return; // FIX: explicit return after error response
         }
 
         if ($data['current_password'] === $data['new_password']) {
             Response::error('New password must be different from current password.', 422);
+            return; // FIX: explicit return after error response
         }
 
         // Enforce password policy
@@ -58,6 +60,7 @@ class SettingsController extends Controller
                 'Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character.',
                 422
             );
+            return; // FIX: explicit return after error response
         }
 
         try {
@@ -140,23 +143,29 @@ class SettingsController extends Controller
     /**
      * POST /api/settings/rotate-tokens
      * Proactive token rotation for enhanced security.
+     *
+     * FIX: This endpoint does NOT require AuthJWT middleware.
+     * The access token may be expired — that is precisely why the client calls this.
+     * Authentication is verified via the refresh token cookie itself.
+     * user_id and tenant_id are read from the validated refresh token DB record,
+     * NOT from $this->getAuthUser() which requires a valid access token.
      */
     public function rotateTokens(Request $request): void
     {
-        $authUser     = $this->getAuthUser();
         $cookieName   = env('REFRESH_COOKIE_NAME', 'refresh_token');
         $refreshToken = $request->getCookie($cookieName);
 
-        if (!$refreshToken) {
-            Response::error('Refresh token not found.', 401);
+        // FIX: Guard checks both null AND non-string to resolve the nullable string
+        // type warning. getCookie() returns ?string, but rotateTokens() expects string.
+        // The explicit (string) cast after the guard fully satisfies PHP strict typing.
+        if (!$refreshToken || !is_string($refreshToken)) {
+            Response::error('Refresh token not found. Please log in again.', 401);
+            return;
         }
 
         try {
-            $result = $this->settingsService->rotateTokens(
-                $refreshToken,
-                $authUser['user_id'],
-                $authUser['tenant_id'] ?? $this->getTenantId()
-            );
+            // $refreshToken is guaranteed a non-null non-empty string after the guard above.
+            $result = $this->settingsService->rotateTokens((string) $refreshToken);
 
             Response::json(['message' => 'Tokens rotated successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
@@ -227,6 +236,7 @@ class SettingsController extends Controller
 
             if (!$result) {
                 Response::error('Session not found or already invalidated.', 404);
+                return; // FIX: explicit return after error response
             }
 
             Response::json(['message' => 'Session invalidated successfully', 'data' => []], 200);
