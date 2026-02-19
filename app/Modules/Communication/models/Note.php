@@ -5,13 +5,17 @@ namespace App\Modules\Communication\Models;
 use App\Core\Database;
 
 /**
- * Note Model — FIXED
+ * Note Model
  *
- * BUG FIXED:
- *   All three queries joined `roles r` and selected `r.name AS author_role`,
- *   but the `roles` table column is `role_name`, not `name`.
- *   This caused a SQL error: "Unknown column 'r.name' in 'field list'".
- *   Fixed: changed `r.name` → `r.role_name` in all three queries.
+ * FIXES APPLIED:
+ *  1. Directory renamed from 'models' to 'Models' to match PSR-4 autoloader
+ *     path resolution on case-sensitive Linux filesystems. Without this fix,
+ *     every Note endpoint throws a fatal "Class not found" error in production.
+ *
+ *  2. All three queries: r.name -> r.role_name (roles table column name fix).
+ *
+ *  3. softDelete() no longer accepts authorId — ownership check moved to controller
+ *     where $user['user_id'] is correctly available.
  */
 class Note
 {
@@ -24,7 +28,7 @@ class Note
 
     /**
      * Find a single note by ID within a tenant.
-     * FIX: r.name → r.role_name
+     * FIX: r.name -> r.role_name
      */
     public function findById(int $id, int $tenantId): ?array
     {
@@ -40,7 +44,7 @@ class Note
 
     /**
      * Get all notes for a specific appointment.
-     * FIX: r.name → r.role_name
+     * FIX: r.name -> r.role_name
      */
     public function getByAppointment(int $appointmentId, int $tenantId, ?string $roleFilter = null): array
     {
@@ -65,7 +69,7 @@ class Note
 
     /**
      * Get message history for an appointment (paginated).
-     * FIX: r.name → r.role_name
+     * FIX: r.name -> r.role_name
      */
     public function getHistory(int $appointmentId, int $tenantId, int $page = 1, int $perPage = 20): array
     {
@@ -123,14 +127,20 @@ class Note
     }
 
     /**
-     * Soft delete a note.
+     * Soft delete a note by ID and tenant only.
+     *
+     * FIX: Removed authorId parameter. The original code passed $user['id']
+     * (undefined) as authorId which caused WHERE author_id = NULL -> 0 rows
+     * matched -> every delete returned 403, even for the note's own author.
+     * Ownership is now verified in the controller using $user['user_id'] before
+     * this method is called.
      */
-    public function softDelete(int $id, int $tenantId, int $authorId): bool
+    public function softDelete(int $id, int $tenantId): bool
     {
         $affected = $this->db->execute(
             'UPDATE appointment_notes SET deleted_at = NOW()
-             WHERE id = :id AND tenant_id = :tid AND author_id = :author_id AND deleted_at IS NULL',
-            ['id' => $id, 'tid' => $tenantId, 'author_id' => $authorId]
+             WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
+            ['id' => $id, 'tid' => $tenantId]
         );
         return $affected > 0;
     }

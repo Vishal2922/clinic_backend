@@ -161,18 +161,45 @@ class StaffService
 
     /**
      * Get available departments for a tenant.
+     * BUG FIX: Original returned raw encrypted blobs aliased as 'department'.
+     *   StaffController then did array_column($departments, 'department') which
+     *   returned an array of AES cipher-text strings — useless for the frontend.
+     * FIX: Decrypt each value here before returning.
      */
     public function getDepartments(int $tenantId): array
     {
-        return $this->staffModel->getDepartments($tenantId);
+        $rows = $this->staffModel->getDepartments($tenantId);
+
+        $decrypted = [];
+        foreach ($rows as $row) {
+            try {
+                $plain = $this->crypto->decrypt($row['department']);
+                if ($plain && !in_array($plain, $decrypted, true)) {
+                    $decrypted[] = $plain;
+                }
+            } catch (\Exception $e) {
+                // Skip rows that fail decryption (e.g. seed PLACEHOLDER values)
+                app_log('getDepartments decrypt error: ' . $e->getMessage(), 'WARNING');
+            }
+        }
+
+        // Return in the same shape the controller expects
+        return array_map(fn($d) => ['department' => $d], $decrypted);
     }
 
     /**
-     * Decrypt encrypted PII fields from the joined user data.
+     * Decrypt encrypted PII fields from the joined user data AND the staff table itself.
+     *
+     * BUG FIX: Original only decrypted user-join fields (email, full_name, phone).
+     *   The staff-table fields (encrypted_department, encrypted_specialization,
+     *   encrypted_license_number) were returned as raw AES cipher-text in every
+     *   list/show/single-staff response.
+     * FIX: Decrypt all six encrypted fields here.
      */
     private function decryptStaffData(array $staff): array
     {
         try {
+            // --- User PII (from JOIN on users table) ---
             if (!empty($staff['encrypted_email'])) {
                 $staff['email'] = $this->crypto->decrypt($staff['encrypted_email']);
             }
@@ -182,6 +209,20 @@ class StaffService
             if (!empty($staff['encrypted_phone'])) {
                 $staff['phone'] = $this->crypto->decrypt($staff['encrypted_phone']);
             }
+
+            // --- Staff profile fields (from staff table) ---
+            if (!empty($staff['encrypted_department'])) {
+                $staff['department'] = $this->crypto->decrypt($staff['encrypted_department']);
+            }
+            if (!empty($staff['encrypted_specialization'])) {
+                $staff['specialization'] = $this->crypto->decrypt($staff['encrypted_specialization']);
+            }
+            if (!empty($staff['encrypted_license_number'])) {
+                $staff['license_number'] = $this->crypto->decrypt($staff['encrypted_license_number']);
+            }
+            if (!empty($staff['encrypted_notes'])) {
+                $staff['notes'] = $this->crypto->decrypt($staff['encrypted_notes']);
+            }
         } catch (\Exception $e) {
             app_log(
                 'Decryption error for staff ' . ($staff['id'] ?? 'unknown') . ': ' . $e->getMessage(),
@@ -189,11 +230,15 @@ class StaffService
             );
         }
 
-        // Remove encrypted fields from response
+        // Remove ALL encrypted fields from response
         unset(
             $staff['encrypted_email'],
             $staff['encrypted_full_name'],
-            $staff['encrypted_phone']
+            $staff['encrypted_phone'],
+            $staff['encrypted_department'],
+            $staff['encrypted_specialization'],
+            $staff['encrypted_license_number'],
+            $staff['encrypted_notes']
         );
 
         return $staff;

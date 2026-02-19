@@ -198,7 +198,8 @@ class InvoiceController extends Controller
         $data     = $request->getBody();
 
         $errors = $this->validate($data, [
-            'status' => 'required|in:pending,paid,overdue,cancelled',
+            // FIX: validation list now matches BillingService::STATUSES and the DB ENUM fully
+            'status' => 'required|in:pending,paid,partially_paid,overdue,cancelled,refunded',
         ]);
 
         if (!empty($errors)) {
@@ -224,8 +225,10 @@ class InvoiceController extends Controller
                 Response::error('Cannot modify a cancelled invoice.', 422);
             }
 
-            $paidAt = ($data['status'] === 'paid') ? date('Y-m-d H:i:s') : null;
-            $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt);
+            $paidAt        = ($data['status'] === 'paid') ? date('Y-m-d H:i:s') : null;
+            // FIX: pass payment_method from request body — original ignored it, so it was never saved
+            $paymentMethod = $data['payment_method'] ?? null;
+            $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
 
             $updated = $this->invoiceModel->findById((int) $id, $tenantId);
 

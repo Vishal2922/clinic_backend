@@ -14,13 +14,16 @@ class BillingService
 {
     private Invoice $invoiceModel;
 
-    // Valid invoice statuses
-    public const STATUSES = ['pending', 'paid', 'overdue', 'cancelled'];
+    // Valid invoice statuses — must match the DB ENUM exactly.
+    // FIX: 'partially_paid' and 'refunded' exist in the DB ENUM but were missing here,
+    // so they could never be set via updateStatus() or used as a filter in index().
+    public const STATUSES = ['pending', 'paid', 'partially_paid', 'overdue', 'cancelled', 'refunded'];
 
     // Status transitions allowed per role
+    // FIX: Added 'partially_paid' and 'refunded' for Admin; 'partially_paid' for Provider.
     private const ROLE_TRANSITIONS = [
-        'Admin'    => ['pending', 'paid', 'overdue', 'cancelled'],
-        'Provider' => ['pending', 'paid', 'overdue'],
+        'Admin'    => ['pending', 'paid', 'partially_paid', 'overdue', 'cancelled', 'refunded'],
+        'Provider' => ['pending', 'paid', 'partially_paid', 'overdue'],
         'Patient'  => ['paid'],
     ];
 
