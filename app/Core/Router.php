@@ -3,8 +3,11 @@
 namespace App\Core;
 
 /**
- * Router Class: Merged Version.
- * Supports: Grouping, Middleware, Dynamic Route Parameters {id}, and Standard HTTP Methods.
+ * Router Class: Fixed Version.
+ * Bugs Fixed:
+ * 1. callHandler() did not handle Closure/callable handlers — fell through to
+ *    "Controller not found" error with empty class name.
+ * 2. Added proper Closure dispatch before class_exists() check.
  */
 class Router
 {
@@ -29,7 +32,7 @@ class Router
         $previousMiddleware = $this->currentGroupMiddleware;
 
         $this->currentPrefix .= $options['prefix'] ?? '';
-        
+
         if (isset($options['middleware'])) {
             $middlewares = is_array($options['middleware']) ? $options['middleware'] : [$options['middleware']];
             $this->currentGroupMiddleware = array_merge($this->currentGroupMiddleware, $middlewares);
@@ -58,9 +61,9 @@ class Router
         $allMiddleware = array_merge($this->currentGroupMiddleware, $middleware);
 
         $this->routes[] = [
-            'method' => strtoupper($method),
-            'path' => rtrim($fullPath, '/') ?: '/',
-            'handler' => $handler,
+            'method'     => strtoupper($method),
+            'path'       => rtrim($fullPath, '/') ?: '/',
+            'handler'    => $handler,
             'middleware' => $allMiddleware,
         ];
     }
@@ -71,7 +74,7 @@ class Router
     public function resolve(): void
     {
         $requestMethod = strtoupper($this->request->getMethod());
-        $requestUri = '/' . ltrim($this->request->getPath(), '/');
+        $requestUri    = '/' . ltrim($this->request->getPath(), '/');
 
         foreach ($this->routes as $route) {
             if ($route['method'] !== $requestMethod) {
@@ -86,16 +89,16 @@ class Router
                     $this->runMiddleware($middleware);
                 }
 
-                // 2. Call Controller Handler
+                // 2. Call Handler (Closure or Controller)
                 $this->callHandler($route['handler'], $params);
                 return;
             }
         }
 
-        // 404 Error using standardized Response helper
+        // 404 Error
         $this->response->error('Route not found!', 404, [
             'method' => $requestMethod,
-            'path' => $requestUri
+            'path'   => $requestUri,
         ]);
     }
 
@@ -110,10 +113,13 @@ class Router
         if (preg_match($pattern, $uri, $matches)) {
             $params = [];
             foreach ($matches as $key => $value) {
-                if (is_string($key)) { $params[$key] = $value; }
+                if (is_string($key)) {
+                    $params[$key] = $value;
+                }
             }
             return $params;
         }
+
         return false;
     }
 
@@ -123,9 +129,9 @@ class Router
     private function runMiddleware($middleware): void
     {
         if (is_string($middleware)) {
-            $parts = explode(':', $middleware, 2);
+            $parts     = explode(':', $middleware, 2);
             $className = $parts[0];
-            $params = isset($parts[1]) ? explode(',', $parts[1]) : [];
+            $params    = isset($parts[1]) ? explode(',', $parts[1]) : [];
 
             if (class_exists($className)) {
                 $instance = new $className();
@@ -138,37 +144,54 @@ class Router
 
     /**
      * Instantiate Controller and call the specific Action.
+     * FIX: Handle Closure handlers before attempting class_exists() check.
      */
     private function callHandler($handler, array $params): void
     {
-        $controllerClass = '';
-        $method = '';
+        // FIX #1: Handle Closure / callable handlers directly
+        if ($handler instanceof \Closure || (is_callable($handler) && !is_array($handler) && !is_string($handler))) {
+            call_user_func_array($handler, [$this->request, $this->response, ...array_values($params)]);
+            return;
+        }
 
+        $controllerClass = '';
+        $method          = '';
+
+        // Array handler: [ControllerClass::class, 'method']
         if (is_array($handler)) {
             [$controllerClass, $method] = $handler;
-        } elseif (is_string($handler) && strpos($handler, '@') !== false) {
+        }
+        // String handler: 'ControllerClass@method'
+        elseif (is_string($handler) && strpos($handler, '@') !== false) {
             [$controllerClass, $method] = explode('@', $handler);
         }
 
-        if (class_exists($controllerClass)) {
-            $controller = new $controllerClass();
-            
-            // Inject Request and Response into the Controller
-            if (method_exists($controller, 'setRequest')) {
-                $controller->setRequest($this->request);
-            }
-            if (method_exists($controller, 'setResponse')) {
-                $controller->setResponse($this->response);
-            }
-            
-            if (method_exists($controller, $method)) {
-                // Pass Request as first argument, then any dynamic URL params
-                call_user_func_array([$controller, $method], [$this->request, ...array_values($params)]);
-            } else {
-                $this->response->error("Method $method not found in $controllerClass", 500);
-            }
-        } else {
-            $this->response->error("Controller $controllerClass not found", 500);
+        if (empty($controllerClass)) {
+            $this->response->error('Invalid route handler configuration', 500);
+            return;
         }
+
+        if (!class_exists($controllerClass)) {
+            $this->response->error("Controller $controllerClass not found", 500);
+            return;
+        }
+
+        $controller = new $controllerClass();
+
+        // Inject Request and Response into the Controller
+        if (method_exists($controller, 'setRequest')) {
+            $controller->setRequest($this->request);
+        }
+        if (method_exists($controller, 'setResponse')) {
+            $controller->setResponse($this->response);
+        }
+
+        if (!method_exists($controller, $method)) {
+            $this->response->error("Method $method not found in $controllerClass", 500);
+            return;
+        }
+
+        // Pass Request as first argument, then any dynamic URL params
+        call_user_func_array([$controller, $method], [$this->request, ...array_values($params)]);
     }
 }

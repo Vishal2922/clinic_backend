@@ -56,7 +56,7 @@ $router->group(['prefix' => '/api/auth', 'middleware' => [$tenant]], function ($
 
     $router->post('/register', [AuthController::class, 'register']);
     $router->post('/login',    [AuthController::class, 'login']);
-    $router->post('/refresh',  [AuthController::class, 'refresh']);
+    //$router->post('/refresh',  [AuthController::class, 'refresh']);
     $router->get('/csrf-token', [AuthController::class, 'csrfToken']);
 
     // Protected
