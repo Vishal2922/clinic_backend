@@ -57,19 +57,24 @@ class Patient
     {
         return $this->db->insert(
             'INSERT INTO patients (tenant_id, encrypted_name, name_hash, encrypted_phone, phone_hash,
-             encrypted_email, email_hash, encrypted_medical_history, status, created_at, updated_at)
+             encrypted_email, email_hash, encrypted_medical_history, encrypted_date_of_birth,
+             encrypted_gender, encrypted_blood_group, status, created_at, updated_at)
              VALUES (:tenant_id, :enc_name, :name_hash, :enc_phone, :phone_hash,
-             :enc_email, :email_hash, :enc_history, :status, NOW(), NOW())',
+             :enc_email, :email_hash, :enc_history, :enc_dob, :enc_gender, :enc_blood_group,
+             :status, NOW(), NOW())',
             [
-                'tenant_id'   => $data['tenant_id'],
-                'enc_name'    => $this->crypto->encrypt($data['name']),
-                'name_hash'   => $this->crypto->hash($data['name']),
-                'enc_phone'   => $this->crypto->encrypt($data['phone']),
-                'phone_hash'  => $this->crypto->hash($data['phone']),
-                'enc_email'   => isset($data['email']) ? $this->crypto->encrypt($data['email']) : null,
-                'email_hash'  => isset($data['email']) ? $this->crypto->hash($data['email']) : null,
-                'enc_history' => $this->crypto->encrypt($data['medical_history']),
-                'status'      => $data['status'] ?? 'active',
+                'tenant_id'       => $data['tenant_id'],
+                'enc_name'        => $this->crypto->encrypt($data['name']),
+                'name_hash'       => $this->crypto->hash($data['name']),
+                'enc_phone'       => $this->crypto->encrypt($data['phone']),
+                'phone_hash'      => $this->crypto->hash($data['phone']),
+                'enc_email'       => isset($data['email']) ? $this->crypto->encrypt($data['email']) : null,
+                'email_hash'      => isset($data['email']) ? $this->crypto->hash($data['email']) : null,
+                'enc_history'     => $this->crypto->encrypt($data['medical_history']),
+                'enc_dob'         => isset($data['dob']) ? $this->crypto->encrypt($data['dob']) : (isset($data['date_of_birth']) ? $this->crypto->encrypt($data['date_of_birth']) : null),
+                'enc_gender'      => isset($data['gender']) ? $this->crypto->encrypt($data['gender']) : null,
+                'enc_blood_group' => isset($data['blood_group']) ? $this->crypto->encrypt($data['blood_group']) : null,
+                'status'          => $data['status'] ?? 'active',
             ]
         );
     }
@@ -101,6 +106,19 @@ class Patient
         if (isset($data['medical_history'])) {
             $sets[] = 'encrypted_medical_history = :enc_history';
             $params['enc_history'] = $this->crypto->encrypt($data['medical_history']);
+        }
+        if (isset($data['dob']) || isset($data['date_of_birth'])) {
+            $sets[] = 'encrypted_date_of_birth = :enc_dob';
+            $val = $data['dob'] ?? $data['date_of_birth'];
+            $params['enc_dob'] = $this->crypto->encrypt($val);
+        }
+        if (isset($data['blood_group'])) {
+            $sets[] = 'encrypted_blood_group = :enc_blood_group';
+            $params['enc_blood_group'] = $this->crypto->encrypt($data['blood_group']);
+        }
+        if (isset($data['gender'])) {
+            $sets[] = 'encrypted_gender = :enc_gender';
+            $params['enc_gender'] = $this->crypto->encrypt($data['gender']);
         }
         if (isset($data['status'])) {
             $sets[] = 'status = :status';
@@ -193,8 +211,14 @@ class Patient
             if (!empty($patient['encrypted_medical_history'])) {
                 $patient['medical_history'] = $this->crypto->decrypt($patient['encrypted_medical_history']);
             }
-            if (!empty($patient['encrypted_dob'])) {
-                $patient['dob'] = $this->crypto->decrypt($patient['encrypted_dob']);
+            if (!empty($patient['encrypted_date_of_birth'])) {
+                $patient['date_of_birth'] = $this->crypto->decrypt($patient['encrypted_date_of_birth']);
+            }
+            if (!empty($patient['encrypted_gender'])) {
+                $patient['gender'] = $this->crypto->decrypt($patient['encrypted_gender']);
+            }
+            if (!empty($patient['encrypted_blood_group'])) {
+                $patient['blood_group'] = $this->crypto->decrypt($patient['encrypted_blood_group']);
             }
             if (!empty($patient['encrypted_address'])) {
                 $patient['address'] = $this->crypto->decrypt($patient['encrypted_address']);
@@ -211,7 +235,10 @@ class Patient
             $patient['encrypted_phone'],
             $patient['encrypted_email'],
             $patient['encrypted_medical_history'],
+            $patient['encrypted_date_of_birth'],
             $patient['encrypted_dob'],
+            $patient['encrypted_gender'],
+            $patient['encrypted_blood_group'],
             $patient['encrypted_address'],
             $patient['encrypted_emergency_contact'],
             $patient['name_hash'],
