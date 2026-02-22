@@ -56,7 +56,7 @@ $router->group(['prefix' => '/api/auth', 'middleware' => [$tenant]], function ($
 
     $router->post('/register', [AuthController::class, 'register']);
     $router->post('/login',    [AuthController::class, 'login']);
-    //$router->post('/refresh',  [AuthController::class, 'refresh']);
+    $router->post('/refresh',  [AuthController::class, 'refresh']);
     $router->get('/csrf-token', [AuthController::class, 'csrfToken']);
 
     // Protected
@@ -177,6 +177,7 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
     $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
     $router->post('/logout',          [SettingsController::class, 'logout'],         [$allAuthenticated, $csrf]);
     $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],      [$allAuthenticated, $csrf]);
+  
 
     $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'], [$allAuthenticated]);
 
@@ -185,11 +186,13 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 
     $router->get('/audit-log',         [SettingsController::class, 'auditLog'],     [$adminOnly]);
     $router->get('/audit-log/actions', [SettingsController::class, 'auditActions'], [$adminOnly]);
+
 });
 
 // rotate-tokens uses only $tenant middleware (no $auth) because the access token
 // may be expired — that is precisely WHY the client is calling this endpoint.
 // Authentication is instead verified via the refresh token cookie itself.
-$router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
+  $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
+
 
 $router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);
