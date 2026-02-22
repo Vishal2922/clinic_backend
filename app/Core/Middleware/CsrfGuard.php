@@ -15,7 +15,7 @@ class CsrfGuard
     public function handle(Request $request, Response $response, array $params = []): void
     {
         $method = $request->getMethod();
-        if (in_array($method, ['GET', 'HEAD', 'OPTIONS'])) {
+        if (in_array($method, ['GET'])) {
             return;
         }
 
