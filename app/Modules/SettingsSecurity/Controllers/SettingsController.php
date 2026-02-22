@@ -155,18 +155,13 @@ class SettingsController extends Controller
         $cookieName   = env('REFRESH_COOKIE_NAME', 'refresh_token');
         $refreshToken = $request->getCookie($cookieName);
 
-        // FIX: Guard checks both null AND non-string to resolve the nullable string
-        // type warning. getCookie() returns ?string, but rotateTokens() expects string.
-        // The explicit (string) cast after the guard fully satisfies PHP strict typing.
         if (!$refreshToken || !is_string($refreshToken)) {
             Response::error('Refresh token not found. Please log in again.', 401);
             return;
         }
 
         try {
-            // $refreshToken is guaranteed a non-null non-empty string after the guard above.
             $result = $this->settingsService->rotateTokens((string) $refreshToken);
-
             Response::json(['message' => 'Tokens rotated successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
             Response::error($e->getMessage(), 401);

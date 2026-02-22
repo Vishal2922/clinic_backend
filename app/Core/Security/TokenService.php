@@ -21,7 +21,7 @@ class TokenService
             'httponly'  => true,
             'secure'   => (bool) env('REFRESH_COOKIE_SECURE', false),
             'samesite' => env('REFRESH_COOKIE_SAMESITE', 'Strict'),
-            'path'     => env('REFRESH_COOKIE_PATH', '/api/auth'),
+            'path'     => '/',
         ];
     }
 

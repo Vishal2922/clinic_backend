@@ -10,7 +10,7 @@ class EnvLoader
     /**
      * Load .env file from project root
      */
-    public static function load(string $path = null): void
+    public static function load(?string $path = null): void
     {
         if (self::$loaded) {
             return;
