@@ -17,7 +17,7 @@ class CsrfGuard
         $enforceOnGet = in_array('all', $params, true);
 
         // Skip CSRF check for safe methods UNLESS enforceOnGet is requested
-        if (!$enforceOnGet && in_array($method, ['GET', 'HEAD', 'OPTIONS'])) {
+        if (!$enforceOnGet && in_array($method, ['GET'])) {
             return;
         }
 
