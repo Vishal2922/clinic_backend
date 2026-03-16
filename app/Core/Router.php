@@ -74,7 +74,7 @@ class Router
     public function resolve(): void
     {
         $requestMethod = strtoupper($this->request->getMethod());
-        $requestUri    = '/' . ltrim($this->request->getPath(), '/');
+        $requestUri    = rtrim('/' . ltrim($this->request->getPath(), '/'), '/') ?: '/';
 
         foreach ($this->routes as $route) {
             if ($route['method'] !== $requestMethod) {

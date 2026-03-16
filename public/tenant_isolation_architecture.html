@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tenant Isolation Architecture — Clinic Management API</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #1a1a2e;
+    line-height: 1.7;
+    padding: 40px 60px;
+    max-width: 1000px;
+    margin: 0 auto;
+    background: #fff;
+    font-size: 14px;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    .page-break { page-break-before: always; }
+    .no-print { display: none; }
+    h1, h2, h3 { page-break-after: avoid; }
+    table, pre { page-break-inside: avoid; }
+  }
+  
+  h1 {
+    font-size: 28px; font-weight: 700; color: #0f3460;
+    border-bottom: 3px solid #0f3460; padding-bottom: 12px; margin-bottom: 8px;
+  }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 30px; }
+  
+  h2 {
+    font-size: 20px; font-weight: 600; color: #16213e;
+    margin: 30px 0 15px; padding: 8px 0; border-bottom: 2px solid #e0e0e0;
+  }
+  h3 { font-size: 16px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  
+  p { margin-bottom: 12px; }
+  
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 13px; }
+  th { background: #0f3460; color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; }
+  td { padding: 8px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) { background: #f8f9fa; }
+  
+  pre {
+    background: #1e1e2e; color: #cdd6f4; padding: 16px;
+    border-radius: 8px; overflow-x: auto; margin: 12px 0 20px;
+    font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.5;
+  }
+  code {
+    font-family: 'Fira Code', monospace; background: #e8eaf6;
+    padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #333;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  
+  .keyword { color: #cba6f7; }
+  .string { color: #a6e3a1; }
+  .comment { color: #6c7086; font-style: italic; }
+  .fn { color: #89b4fa; }
+  .var { color: #f38ba8; }
+  .num { color: #fab387; }
+  
+  .box { border: 2px solid #0f3460; border-radius: 8px; padding: 16px; margin: 16px 0; background: #f0f4ff; }
+  .box-title { font-weight: 700; color: #0f3460; font-size: 14px; margin-bottom: 8px; }
+  
+  .warn { border-color: #e65100; background: #fff3e0; }
+  .warn .box-title { color: #e65100; }
+  
+  .flow-step {
+    display: flex; align-items: flex-start; margin: 8px 0; gap: 12px;
+  }
+  .step-num {
+    background: #0f3460; color: #fff; width: 28px; height: 28px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; flex-shrink: 0; margin-top: 2px;
+  }
+  .step-text { flex: 1; }
+  
+  .arrow { text-align: center; font-size: 20px; color: #0f3460; margin: 4px 0; }
+  
+  .diagram {
+    background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;
+    padding: 20px; margin: 16px 0; text-align: center;
+  }
+  .diagram-box {
+    display: inline-block; padding: 10px 16px; border-radius: 6px;
+    margin: 4px 8px; font-size: 12px; font-weight: 600;
+  }
+  .db-master { background: #ff9800; color: #000; }
+  .db-tenant { background: #4caf50; color: #fff; }
+  .middleware { background: #2196f3; color: #fff; }
+  .controller { background: #9c27b0; color: #fff; }
+
+  .print-btn {
+    position: fixed; bottom: 20px; right: 20px; background: #0f3460; color: #fff;
+    border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 1000;
+  }
+  .print-btn:hover { background: #1a4a8a; }
+
+  ul, ol { margin-left: 24px; margin-bottom: 12px; }
+  li { margin-bottom: 4px; }
+
+  .toc { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">📄 Save as PDF (Ctrl+P)</button>
+
+<h1>Tenant Isolation Architecture</h1>
+<p class="subtitle">Clinic Management API — Multi-Tenancy Deep-Dive &nbsp;|&nbsp; February 2026</p>
+
+<div class="toc">
+  <strong>Table of Contents</strong>
+  <ol>
+    <li><a href="#overview">Architecture Overview</a></li>
+    <li><a href="#db-structure">Database Structure</a></li>
+    <li><a href="#key-files">The 9 Key Files</a></li>
+    <li><a href="#flow1">Flow 1: Creating a New Tenant (Provisioning)</a></li>
+    <li><a href="#flow2">Flow 2: How a Tenant API Request Gets Routed</a></li>
+    <li><a href="#flow3">Flow 3: How Isolation is Enforced</a></li>
+    <li><a href="#deep-dive">File-by-File Deep Dive</a></li>
+    <li><a href="#lifecycle">Complete Request Lifecycle</a></li>
+  </ol>
+</div>
+
+<!-- SECTION 1 -->
+<h2 id="overview">1. Architecture Overview</h2>
+
+<div class="box">
+  <div class="box-title">Strategy: Database-Per-Tenant</div>
+  <p>Each tenant gets its <strong>own MySQL database</strong>, completely isolated from other tenants. When a request comes in with <code>X-Tenant-ID: apollo_clinic</code>, the system connects to <code>clinic_tenant_apollo_clinic_db</code> — a separate database with its own tables, data, and MySQL user.</p>
+</div>
+
+<h3>Request Flow Diagram</h3>
+<div class="diagram">
+  <div class="diagram-box" style="background:#e3f2fd;color:#000;border:2px solid #333">Client Request<br><small>POST /api/patients<br>X-Tenant-ID: apollo_clinic</small></div>
+  <div class="arrow">⬇</div>
+  <div class="diagram-box" style="background:#fff;color:#000;border:2px solid #333">public/index.php<br><small>Bootstrap + Router</small></div>
+  <div class="arrow">⬇</div>
+  <div class="diagram-box middleware">ResolveTenant Middleware<br><small>Validates tenant + connects DB</small></div>
+  <div class="arrow" style="display:flex;justify-content:center;gap:40px;">
+    <span>⬇ queries</span>
+  </div>
+  <div style="display:flex;justify-content:center;gap:40px;flex-wrap:wrap;">
+    <div class="diagram-box db-master">clinic_master_db<br><small>tenants table (credentials)</small></div>
+    <div style="font-size:24px;align-self:center;">→</div>
+    <div class="diagram-box db-tenant">clinic_tenant_apollo_clinic_db<br><small>patients, appointments, etc.</small></div>
+  </div>
+  <div class="arrow">⬇</div>
+  <div class="diagram-box middleware">AuthJWT Middleware → AuthorizeRole</div>
+  <div class="arrow">⬇</div>
+  <div class="diagram-box controller">PatientController → Model → tenant_db()</div>
+  <div class="arrow">⬇</div>
+  <div class="diagram-box db-tenant">All queries go to tenant's own DB only</div>
+</div>
+
+<!-- SECTION 2 -->
+<h2 id="db-structure">2. Database Structure</h2>
+
+<div class="diagram">
+  <div style="margin-bottom:10px;font-weight:700;">MySQL Server</div>
+  <div class="diagram-box db-master">clinic_master_db<br><small>(1 shared database)</small></div>
+  <div style="margin:10px 0;font-size:12px;color:#666;">stores connection credentials for ⬇</div>
+  <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
+    <div class="diagram-box db-tenant">clinic_tenant_<br>apollo_clinic_db</div>
+    <div class="diagram-box db-tenant">clinic_tenant_<br>test_clinic_db</div>
+    <div class="diagram-box db-tenant">clinic_tenant_<br>xyz_hospital_db</div>
+    <div class="diagram-box db-tenant" style="opacity:0.6">...one per tenant</div>
+  </div>
+</div>
+
+<table>
+  <tr><th>Database</th><th>Purpose</th><th>Tables</th></tr>
+  <tr>
+    <td><code>clinic_master_db</code></td>
+    <td>Platform-wide data</td>
+    <td><code>tenants</code>, <code>super_admins</code>, <code>master_audit_logs</code></td>
+  </tr>
+  <tr>
+    <td><code>clinic_tenant_{code}_db</code></td>
+    <td>Per-tenant data (one per clinic)</td>
+    <td><code>users</code>, <code>patients</code>, <code>appointments</code>, <code>prescriptions</code>, <code>invoices</code>, <code>staff</code>, <code>appointment_notes</code>, <code>audit_log</code>, <code>user_sessions</code>, <code>roles</code></td>
+  </tr>
+</table>
+
+<!-- SECTION 3 -->
+<h2 id="key-files">3. The 9 Key Files</h2>
+
+<table>
+  <tr><th>#</th><th>File</th><th>Role</th></tr>
+  <tr><td>1</td><td><code>SuperAdmin/Controllers/TenantController.php</code></td><td><strong>API entry point</strong> — receives <code>POST /api/super-admin/tenants</code></td></tr>
+  <tr><td>2</td><td><code>SuperAdmin/Services/TenantProvisioningService.php</code></td><td><strong>Creates the database</strong>, schema, MySQL user, and admin user</td></tr>
+  <tr><td>3</td><td><code>Core/MasterDatabase.php</code></td><td>Singleton PDO connection to <code>clinic_master_db</code></td></tr>
+  <tr><td>4</td><td><code>Core/TenantDatabase.php</code></td><td>Singleton-per-tenant PDO connections to <code>clinic_tenant_{code}_db</code></td></tr>
+  <tr><td>5</td><td><code>Core/TenantRegistry.php</code></td><td>Static global variable holding the current tenant code</td></tr>
+  <tr><td>6</td><td><code>Core/Middleware/ResolveTenant.php</code></td><td><strong>Middleware</strong> — validates tenant, connects to tenant DB, sets registry</td></tr>
+  <tr><td>7</td><td><code>Helpers/functions.php</code></td><td><code>tenant_db()</code> helper — shortcut used by all models</td></tr>
+  <tr><td>8</td><td><code>routes/api.php</code></td><td>Wires <code>$tenant</code> middleware to every tenant-scoped route group</td></tr>
+  <tr><td>9</td><td><code>Core/Database.php</code></td><td>Legacy master DB class (used before MasterDatabase was introduced)</td></tr>
+</table>
+
+<!-- SECTION 4 -->
+<div class="page-break"></div>
+<h2 id="flow1">4. Flow 1: Creating a New Tenant (Provisioning)</h2>
+
+<p>This is what happens when a Super Admin calls <code>POST /api/super-admin/tenants</code>:</p>
+
+<div class="flow-step"><div class="step-num">1</div><div class="step-text"><strong>TenantController.store()</strong> validates input (tenant_code format, plan name, email) and calls the provisioning service.</div></div>
+
+<div class="flow-step"><div class="step-num">2</div><div class="step-text"><strong>TenantProvisioningService.provision()</strong> generates DB credentials:
+<pre><code><span class="var">$dbName</span> = <span class="string">"clinic_tenant_{$tenantCode}_db"</span>;   <span class="comment">// e.g. clinic_tenant_apollo_clinic_db</span>
+<span class="var">$dbUser</span> = <span class="string">"clinic_{$tenantCode}"</span>;              <span class="comment">// e.g. clinic_apollo_clinic</span>
+<span class="var">$dbPass</span> = <span class="fn">bin2hex</span>(<span class="fn">random_bytes</span>(<span class="num">24</span>));           <span class="comment">// Random 48-char hex password</span></code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">3</div><div class="step-text"><strong>createDatabase()</strong> — Creates the MySQL database:
+<pre><code><span class="keyword">CREATE DATABASE IF NOT EXISTS</span> <span class="string">`clinic_tenant_apollo_clinic_db`</span>
+  <span class="keyword">CHARACTER SET</span> utf8mb4 <span class="keyword">COLLATE</span> utf8mb4_unicode_ci</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">4</div><div class="step-text"><strong>createDatabaseUser()</strong> — Creates a dedicated MySQL user with limited permissions:
+<pre><code><span class="keyword">CREATE USER</span> <span class="string">'clinic_apollo_clinic'</span>@<span class="string">'%'</span> <span class="keyword">IDENTIFIED BY</span> <span class="string">'random_password'</span>;
+<span class="keyword">GRANT</span> SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER
+  <span class="keyword">ON</span> <span class="string">`clinic_tenant_apollo_clinic_db`</span>.* <span class="keyword">TO</span> <span class="string">'clinic_apollo_clinic'</span>@<span class="string">'%'</span>;
+<span class="comment">-- Note: No DROP, no GRANT — tenant user cannot destroy data or escalate</span></code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">5</div><div class="step-text"><strong>runTenantSchema()</strong> — Creates all 10 tables inside the new database. The schema is defined in <code>getInlineSchema()</code> method which returns CREATE TABLE statements for: <code>roles</code>, <code>users</code>, <code>patients</code>, <code>appointments</code>, <code>appointment_notes</code>, <code>prescriptions</code>, <code>invoices</code>, <code>audit_log</code>, <code>user_sessions</code>, <code>staff</code>.</div></div>
+
+<div class="flow-step"><div class="step-num">6</div><div class="step-text"><strong>seedTenantDefaults()</strong> — Inserts 6 default roles:
+<pre><code><span class="keyword">INSERT INTO</span> roles (id, role_name, name) <span class="keyword">VALUES</span>
+  (<span class="num">1</span>, <span class="string">'Admin'</span>), (<span class="num">2</span>, <span class="string">'Provider'</span>), (<span class="num">3</span>, <span class="string">'Nurse'</span>),
+  (<span class="num">4</span>, <span class="string">'Patient'</span>), (<span class="num">5</span>, <span class="string">'Pharmacist'</span>), (<span class="num">6</span>, <span class="string">'Receptionist'</span>);</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">7</div><div class="step-text"><strong>createInitialTenantAdmin()</strong> — Creates the first admin user with a random password (bcrypt-hashed). Returns the plain password to the Super Admin.</div></div>
+
+<div class="flow-step"><div class="step-num">8</div><div class="step-text"><strong>Register in master DB</strong> — Inserts a row into <code>clinic_master_db.tenants</code> with the DB credentials (host, name, username, password), plan, and subscription dates.</div></div>
+
+<div class="box warn">
+  <div class="box-title">⚠️ Rollback on Failure</div>
+  <p>If any step fails, the service automatically cleans up by running <code>DROP DATABASE</code> and <code>DROP USER</code> to prevent orphaned resources.</p>
+</div>
+
+<!-- SECTION 5 -->
+<div class="page-break"></div>
+<h2 id="flow2">5. Flow 2: How a Tenant API Request Gets Routed</h2>
+
+<p>This is what happens when a tenant user calls any endpoint (e.g., <code>GET /api/patients</code>):</p>
+
+<div class="flow-step"><div class="step-num">1</div><div class="step-text"><strong>Route Definition</strong> — In <code>routes/api.php</code>, every tenant route group includes the <code>$tenant</code> middleware:
+<pre><code><span class="var">$tenant</span> = ResolveTenant::<span class="keyword">class</span>;
+
+<span class="var">$router</span>-><span class="fn">group</span>([
+  <span class="string">'prefix'</span>     => <span class="string">'/api/patients'</span>,
+  <span class="string">'middleware'</span> => [<span class="var">$tenant</span>, <span class="var">$auth</span>]   <span class="comment">// ← ResolveTenant runs first</span>
+], <span class="keyword">function</span>(<span class="var">$router</span>) { ... });</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">2</div><div class="step-text"><strong>ResolveTenant.handle()</strong> reads the <code>X-Tenant-ID</code> header:
+<pre><code><span class="var">$tenantCode</span> = <span class="var">$request</span>-><span class="fn">getHeader</span>(<span class="string">'x-tenant-id'</span>);   <span class="comment">// "apollo_clinic"</span></code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">3</div><div class="step-text"><strong>Queries master DB</strong> for the tenant's DB credentials:
+<pre><code><span class="var">$tenant</span> = <span class="var">$masterDb</span>-><span class="fn">fetch</span>(
+  <span class="string">'SELECT id, status, db_host, db_name, db_username, db_password
+   FROM tenants WHERE tenant_code = :code'</span>,
+  [<span class="string">'code'</span> => <span class="var">$tenantCode</span>]
+);</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">4</div><div class="step-text"><strong>Validates the tenant</strong>:
+<ul>
+  <li>Status must be <code>"active"</code> (not suspended/terminated)</li>
+  <li>Subscription must not be expired</li>
+</ul></div></div>
+
+<div class="flow-step"><div class="step-num">5</div><div class="step-text"><strong>Creates PDO connection</strong> to the tenant's own database:
+<pre><code>TenantDatabase::<span class="fn">getInstance</span>(<span class="var">$tenantCode</span>, [
+  <span class="string">'db_host'</span> => <span class="var">$tenant</span>[<span class="string">'db_host'</span>],
+  <span class="string">'db_name'</span> => <span class="var">$tenant</span>[<span class="string">'db_name'</span>],     <span class="comment">// "clinic_tenant_apollo_clinic_db"</span>
+  <span class="string">'db_username'</span> => <span class="var">$tenant</span>[<span class="string">'db_username'</span>],
+  <span class="string">'db_password'</span> => <span class="var">$tenant</span>[<span class="string">'db_password'</span>],
+]);</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">6</div><div class="step-text"><strong>Registers the active tenant globally</strong>:
+<pre><code>TenantRegistry::<span class="fn">set</span>(<span class="var">$tenantCode</span>);   <span class="comment">// Stores "apollo_clinic" in static var</span>
+<span class="var">$request</span>-><span class="fn">setAttribute</span>(<span class="string">'tenant_id'</span>, <span class="var">$tenant</span>[<span class="string">'id'</span>]);</code></pre></div></div>
+
+<div class="flow-step"><div class="step-num">7</div><div class="step-text"><strong>Models use tenant_db() helper</strong> — Every model calls this to get the correct PDO:
+<pre><code><span class="comment">// Helpers/functions.php</span>
+<span class="keyword">function</span> <span class="fn">tenant_db</span>(): TenantDatabase {
+  <span class="var">$code</span> = TenantRegistry::<span class="fn">getCode</span>();           <span class="comment">// "apollo_clinic"</span>
+  <span class="keyword">return</span> TenantDatabase::<span class="fn">getInstance</span>(<span class="var">$code</span>);  <span class="comment">// Returns cached PDO</span>
+}
+
+<span class="comment">// Every model follows this pattern:</span>
+<span class="keyword">class</span> <span class="fn">PatientModel</span> {
+  <span class="keyword">private function</span> <span class="fn">db</span>() { <span class="keyword">return</span> <span class="fn">tenant_db</span>(); }
+  
+  <span class="keyword">public function</span> <span class="fn">getAll</span>() {
+    <span class="keyword">return</span> <span class="var">$this</span>-><span class="fn">db</span>()-><span class="fn">fetchAll</span>(<span class="string">'SELECT * FROM patients'</span>);
+    <span class="comment">// ↑ Runs against clinic_tenant_apollo_clinic_db.patients</span>
+  }
+}</code></pre></div></div>
+
+<!-- SECTION 6 -->
+<div class="page-break"></div>
+<h2 id="flow3">6. Flow 3: How Isolation is Enforced</h2>
+
+<div class="diagram">
+  <div style="display:flex;justify-content:center;gap:40px;flex-wrap:wrap;">
+    <div style="text-align:center;">
+      <div style="font-weight:700;margin-bottom:8px;">Request from Tenant A</div>
+      <div class="diagram-box" style="background:#e3f2fd;color:#000;border:1px solid #999;">X-Tenant-ID: apollo_clinic</div>
+      <div class="arrow">⬇</div>
+      <div class="diagram-box middleware">ResolveTenant</div>
+      <div class="arrow">⬇</div>
+      <div class="diagram-box db-tenant">clinic_tenant_apollo_clinic_db<br><small>Apollo's patients only</small></div>
+    </div>
+    <div style="align-self:center;font-size:30px;color:#ccc;">|</div>
+    <div style="text-align:center;">
+      <div style="font-weight:700;margin-bottom:8px;">Request from Tenant B</div>
+      <div class="diagram-box" style="background:#fce4ec;color:#000;border:1px solid #999;">X-Tenant-ID: xyz_hospital</div>
+      <div class="arrow">⬇</div>
+      <div class="diagram-box middleware">ResolveTenant</div>
+      <div class="arrow">⬇</div>
+      <div class="diagram-box" style="background:#2196f3;color:#fff;display:inline-block;padding:10px 16px;border-radius:6px;margin:4px 8px;font-size:12px;font-weight:600;">clinic_tenant_xyz_hospital_db<br><small>XYZ's patients only</small></div>
+    </div>
+  </div>
+</div>
+
+<h3>Security Layers</h3>
+<table>
+  <tr><th>Layer</th><th>What It Does</th><th>File : Line</th></tr>
+  <tr><td>Header validation</td><td>Rejects requests without <code>X-Tenant-ID</code></td><td>ResolveTenant.php : 17</td></tr>
+  <tr><td>Master DB lookup</td><td>Validates tenant exists and is active</td><td>ResolveTenant.php : 23</td></tr>
+  <tr><td>Status check</td><td>Blocks suspended/terminated/inactive tenants</td><td>ResolveTenant.php : 36</td></tr>
+  <tr><td>Subscription check</td><td>Blocks expired subscriptions (402)</td><td>ResolveTenant.php : 47</td></tr>
+  <tr><td>Separate PDO</td><td>Each tenant gets its own PDO instance</td><td>TenantDatabase.php : 29</td></tr>
+  <tr><td>Separate MySQL user</td><td>Each tenant's DB user can only access its own DB</td><td>TenantProvisioningService.php : 192</td></tr>
+  <tr><td>Singleton caching</td><td>One PDO per tenant per request (no cross-contamination)</td><td>TenantDatabase.php : 47</td></tr>
+</table>
+
+<h3>Why Tenant A Can NEVER See Tenant B's Data</h3>
+<ol>
+  <li><strong>Different databases</strong> — Apollo's patients are in <code>clinic_tenant_apollo_clinic_db.patients</code>, XYZ's are in <code>clinic_tenant_xyz_hospital_db.patients</code></li>
+  <li><strong>Different MySQL users</strong> — <code>clinic_apollo_clinic</code> user has <code>GRANT</code> only on <code>clinic_tenant_apollo_clinic_db.*</code></li>
+  <li><strong>Different PDO connections</strong> — PHP creates a separate PDO object for each tenant</li>
+  <li><strong>No cross-DB queries</strong> — Models use <code>tenant_db()</code> which always resolves to the current request's tenant</li>
+</ol>
+
+<!-- SECTION 7 -->
+<div class="page-break"></div>
+<h2 id="deep-dive">7. File-by-File Deep Dive</h2>
+
+<h3>① TenantController.php — API Entry Point</h3>
+<p>Located at: <code>app/Modules/SuperAdmin/Controllers/TenantController.php</code></p>
+<table>
+  <tr><th>Method</th><th>Route</th><th>What It Does</th></tr>
+  <tr><td><code>store()</code></td><td><code>POST /api/super-admin/tenants</code></td><td>Validates input → calls <code>provision()</code></td></tr>
+  <tr><td><code>index()</code></td><td><code>GET /api/super-admin/tenants</code></td><td>Lists all tenants from master DB</td></tr>
+  <tr><td><code>show()</code></td><td><code>GET /api/super-admin/tenants/{code}</code></td><td>Shows one tenant's details</td></tr>
+  <tr><td><code>suspend()</code></td><td><code>POST .../tenants/{code}/suspend</code></td><td>Sets status to "suspended"</td></tr>
+  <tr><td><code>stats()</code></td><td><code>GET .../tenants/{code}/stats</code></td><td>Connects to tenant DB to count users/patients</td></tr>
+</table>
+
+<h3>② TenantProvisioningService.php — The Heart of Provisioning</h3>
+<p>Located at: <code>app/Modules/SuperAdmin/Services/TenantProvisioningService.php</code></p>
+<p>This is the <strong>most important file</strong>. It contains:</p>
+<table>
+  <tr><th>Method</th><th>What It Does</th></tr>
+  <tr><td><code>provision()</code></td><td>Orchestrates: create DB → user → schema → seed → admin</td></tr>
+  <tr><td><code>createDatabase()</code></td><td><code>CREATE DATABASE clinic_tenant_{code}_db</code></td></tr>
+  <tr><td><code>createDatabaseUser()</code></td><td><code>CREATE USER</code> + limited <code>GRANT</code></td></tr>
+  <tr><td><code>runTenantSchema()</code></td><td>Runs 10 <code>CREATE TABLE</code> statements</td></tr>
+  <tr><td><code>seedTenantDefaults()</code></td><td>Inserts 6 default roles</td></tr>
+  <tr><td><code>createInitialTenantAdmin()</code></td><td>Creates first admin with bcrypt password</td></tr>
+  <tr><td><code>getInlineSchema()</code></td><td>Returns all CREATE TABLE SQL — <strong>table definitions live here</strong></td></tr>
+</table>
+
+<h3>③ MasterDatabase.php — Master DB Connection</h3>
+<p>Located at: <code>app/Core/MasterDatabase.php</code></p>
+<ul>
+  <li><strong>Singleton</strong> — one instance for the entire application</li>
+  <li>Connects to <code>clinic_master_db</code> (configured via <code>.env</code>: <code>MASTER_DB_DATABASE</code>)</li>
+  <li>Used by: ResolveTenant, TenantController, SuperAdminAuthController</li>
+</ul>
+
+<h3>④ TenantDatabase.php — Per-Tenant Connections</h3>
+<p>Located at: <code>app/Core/TenantDatabase.php</code></p>
+<ul>
+  <li><strong>Singleton-per-tenant</strong> — cached in <code>static $instances['apollo_clinic']</code></li>
+  <li>DB name convention: <code>clinic_tenant_{tenant_code}_db</code></li>
+  <li>If credentials aren't passed, it looks them up from master DB</li>
+  <li>Provides: <code>fetch()</code>, <code>fetchAll()</code>, <code>insert()</code>, <code>execute()</code>, <code>query()</code></li>
+</ul>
+
+<h3>⑤ TenantRegistry.php — Global Tenant Code</h3>
+<p>Located at: <code>app/Core/TenantRegistry.php</code></p>
+<p>Simple static class — acts as a global variable for the current request's tenant code:</p>
+<pre><code>TenantRegistry::<span class="fn">set</span>(<span class="string">"apollo_clinic"</span>)   <span class="comment">← called by ResolveTenant middleware</span>
+TenantRegistry::<span class="fn">getCode</span>()              <span class="comment">← called by tenant_db() helper</span></code></pre>
+
+<h3>⑥ ResolveTenant.php — The Gatekeeper Middleware</h3>
+<p>Located at: <code>app/Core/Middleware/ResolveTenant.php</code></p>
+<p>Runs before every tenant-scoped endpoint. Does 5 things:</p>
+<ol>
+  <li>Reads <code>X-Tenant-ID</code> header</li>
+  <li>Queries master DB for tenant credentials</li>
+  <li>Validates status and subscription</li>
+  <li>Creates PDO connection to tenant DB</li>
+  <li>Sets TenantRegistry and request attributes</li>
+</ol>
+
+<h3>⑦ functions.php — tenant_db() Helper</h3>
+<p>Located at: <code>app/Helpers/functions.php</code></p>
+<p>The bridge between models and the database. Every model calls this instead of manually managing connections.</p>
+
+<!-- SECTION 8 -->
+<div class="page-break"></div>
+<h2 id="lifecycle">8. Complete Request Lifecycle</h2>
+
+<pre><code>Client sends: POST /api/patients  { X-Tenant-ID: apollo_clinic }
+    │
+    ▼
+index.php bootstraps → Router loads routes → matches /api/patients (POST)
+    │
+    ▼
+Middleware pipeline runs in order:
+    │
+    ├─ 1. ResolveTenant  →  reads "apollo_clinic" from header
+    │       ├── queries clinic_master_db.tenants for DB credentials
+    │       ├── validates status = "active", subscription not expired
+    │       ├── creates PDO to clinic_tenant_apollo_clinic_db
+    │       └── sets TenantRegistry::$tenantCode = "apollo_clinic"
+    │
+    ├─ 2. AuthJWT  →  validates Bearer token, extracts user_id + role
+    │
+    ├─ 3. CsrfGuard  →  validates X-CSRF-TOKEN matches session
+    │
+    └─ 4. AuthorizeRole  →  checks user has 'Admin' or 'Provider' role
+    │
+    ▼
+PatientController->store()
+    │
+    ├── calls $this->getAuthUser()  →  gets user from JWT
+    ├── calls $this->getTenantId()  →  gets tenant_id from request attribute
+    ├── validates input fields
+    ├── encrypts sensitive fields (CryptoService::encrypt)
+    │
+    └── calls PatientModel->create($data)
+            │
+            └── $this->db()         →  tenant_db()
+                    │
+                    └── TenantRegistry::getCode()  →  "apollo_clinic"
+                            │
+                            └── TenantDatabase::getInstance("apollo_clinic")
+                                    │
+                                    └── Returns cached PDO for clinic_tenant_apollo_clinic_db
+                                            │
+                                            └── INSERT INTO patients (...) VALUES (...)
+                                                 ↑ runs against apollo_clinic's DB ONLY</code></pre>
+
+<div class="box" style="margin-top:30px;">
+  <div class="box-title">📌 Key Takeaway</div>
+  <p>Tenant isolation is enforced at <strong>three levels</strong>: (1) the application layer via middleware gating and per-tenant PDO singletons, (2) the database layer via separate MySQL databases per tenant, and (3) the MySQL user layer via <code>GRANT</code> permissions scoped to each tenant's database only. Even if application code had a bug, the MySQL user for Tenant A literally cannot query Tenant B's database.</p>
+</div>
+
+<div style="margin-top: 40px; text-align: center; color: #999; font-size: 12px; border-top: 1px solid #eee; padding-top: 20px;">
+  Clinic Management API — Tenant Isolation Architecture Document — Generated February 2026
+</div>
+
+</body>
+</html>

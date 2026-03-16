@@ -2,63 +2,48 @@
 
 namespace App\Modules\AuthTenant\Services;
 
-use App\Core\Database;
 use App\Core\Security\JwtService;
 use App\Core\Security\TokenService;
 use App\Core\Security\CryptoService;
 use App\Core\Middleware\CsrfGuard;
 use App\Modules\UsersRoles\Models\Permission;
+use App\Modules\AuthTenant\Models\AuthModel;
 
 class AuthService
 {
-    private Database $db;
     private JwtService $jwt;
     private TokenService $tokenService;
     private CryptoService $crypto;
     private Permission $permissionModel;
+    private AuthModel $authModel;
 
     public function __construct()
     {
-        $this->db              = Database::getInstance();
         $this->jwt             = new JwtService();
         $this->tokenService    = new TokenService();
         $this->crypto          = new CryptoService();
         $this->permissionModel = new Permission();
+        $this->authModel       = new AuthModel();
     }
 
-    /**
-     * Register a new user
-     */
     public function register(array $data, int $tenantId): array
     {
-        // Check if username already exists in this tenant
-        $existing = $this->db->fetch(
-            'SELECT id FROM users WHERE tenant_id = :tid AND username = :username AND deleted_at IS NULL',
-            ['tid' => $tenantId, 'username' => $data['username']]
-        );
+        $existing = $this->authModel->findByUsername($data['username']);
 
         if ($existing) {
             throw new \RuntimeException('Username already exists in this tenant');
         }
 
-        // Check if email already exists (using email hash for lookup)
         $emailHash = $this->crypto->hash($data['email']);
-        $existingEmail = $this->db->fetch(
-            'SELECT id FROM users WHERE tenant_id = :tid AND email_hash = :hash AND deleted_at IS NULL',
-            ['tid' => $tenantId, 'hash' => $emailHash]
-        );
+        $existingEmail = $this->authModel->findByEmailHash($emailHash);
 
         if ($existingEmail) {
             throw new \RuntimeException('Email already registered in this tenant');
         }
 
-        // Get default role (Patient for self-registration)
         $roleId = $data['role_id'] ?? null;
         if (!$roleId) {
-            $defaultRole = $this->db->fetch(
-                'SELECT id FROM roles WHERE tenant_id = :tid AND role_name = :name',
-                ['tid' => $tenantId, 'name' => 'Patient']
-            );
+            $defaultRole = $this->authModel->findDefaultRole();
             $roleId = $defaultRole ? $defaultRole['id'] : null;
         }
 
@@ -66,44 +51,32 @@ class AuthService
             throw new \RuntimeException('Default role not found for this tenant');
         }
 
-        // Validate role belongs to tenant
-        $role = $this->db->fetch(
-            'SELECT id, role_name FROM roles WHERE id = :rid AND tenant_id = :tid',
-            ['rid' => $roleId, 'tid' => $tenantId]
-        );
+        $role = $this->authModel->findRoleById($roleId);
 
         if (!$role) {
             throw new \RuntimeException('Invalid role for this tenant');
         }
 
-        // Encrypt sensitive data with AES-256-CBC
         $encryptedEmail    = $this->crypto->encrypt($data['email']);
         $encryptedFullName = isset($data['full_name']) ? $this->crypto->encrypt($data['full_name']) : null;
         $encryptedPhone    = isset($data['phone']) ? $this->crypto->encrypt($data['phone']) : null;
 
-        // Hash password with Argon2ID
         $passwordHash = password_hash($data['password'], PASSWORD_ARGON2ID, [
             'memory_cost' => 65536,
             'time_cost'   => 4,
             'threads'     => 3,
         ]);
 
-        // Insert user
-        $userId = $this->db->insert(
-            'INSERT INTO users (tenant_id, role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, encrypted_phone, status) 
-             VALUES (:tenant_id, :role_id, :username, :encrypted_email, :email_hash, :password_hash, :encrypted_full_name, :encrypted_phone, :status)',
-            [
-                'tenant_id'          => $tenantId,
-                'role_id'            => $roleId,
-                'username'           => sanitize($data['username']),
-                'encrypted_email'    => $encryptedEmail,
-                'email_hash'         => $emailHash,
-                'password_hash'      => $passwordHash,
-                'encrypted_full_name'=> $encryptedFullName,
-                'encrypted_phone'    => $encryptedPhone,
-                'status'             => 'active',
-            ]
-        );
+        $userId = $this->authModel->createUser([
+            'role_id'             => $roleId,
+            'username'            => sanitize($data['username']),
+            'encrypted_email'     => $encryptedEmail,
+            'email_hash'          => $emailHash,
+            'password_hash'       => $passwordHash,
+            'encrypted_full_name' => $encryptedFullName,
+            'encrypted_phone'     => $encryptedPhone,
+            'status'              => 'active',
+        ]);
 
         app_log("User registered: {$data['username']} (ID: {$userId}) in tenant {$tenantId}");
 
@@ -114,21 +87,9 @@ class AuthService
         ];
     }
 
-    /**
-     * Login user — returns access token, sets refresh cookie, generates CSRF
-     */
     public function login(string $username, string $password, int $tenantId): array
     {
-        // Find user with role
-        $user = $this->db->fetch(
-            'SELECT u.*, r.role_name 
-             FROM users u 
-             JOIN roles r ON u.role_id = r.id 
-             WHERE u.tenant_id = :tid 
-               AND u.username = :username 
-               AND u.deleted_at IS NULL',
-            ['tid' => $tenantId, 'username' => $username]
-        );
+        $user = $this->authModel->findForLogin($username);
 
         if (!$user) {
             throw new \RuntimeException('Invalid credentials');
@@ -138,26 +99,19 @@ class AuthService
             throw new \RuntimeException('Account is inactive. Contact your administrator.');
         }
 
-        // Verify password
         if (!password_verify($password, $user['password_hash'])) {
             app_log("Failed login attempt for user: {$username} in tenant {$tenantId}", 'WARNING');
             throw new \RuntimeException('Invalid credentials');
         }
 
-        // Rehash if algorithm upgraded
         if (password_needs_rehash($user['password_hash'], PASSWORD_ARGON2ID)) {
             $newHash = password_hash($password, PASSWORD_ARGON2ID);
-            $this->db->execute(
-                'UPDATE users SET password_hash = :hash WHERE id = :id',
-                ['hash' => $newHash, 'id' => $user['id']]
-            );
+            $this->authModel->rehashPassword((int) $user['id'], $newHash);
         }
 
-        // Get user's permissions for this role
         $permissions    = $this->permissionModel->getByRoleId((int) $user['role_id']);
         $permissionKeys = array_column($permissions, 'permission_key');
 
-        // Generate access token (JWT) with role + permissions
         $accessToken = $this->jwt->generateAccessToken([
             'sub'         => (int) $user['id'],
             'tenant_id'   => $tenantId,
@@ -167,19 +121,15 @@ class AuthService
             'permissions' => $permissionKeys,
         ]);
 
-        // Generate refresh token (stored hashed in DB)
         $refreshToken = $this->tokenService->createRefreshToken(
             (int) $user['id'],
             $tenantId
         );
 
-        // Set refresh token as HttpOnly cookie
         $this->tokenService->setRefreshTokenCookie($refreshToken);
 
-        // Generate CSRF token (stored in PHP session)
         $csrfToken = CsrfGuard::generate();
 
-        // Decrypt user data for response
         $decryptedEmail = $this->crypto->decrypt($user['encrypted_email']);
         $decryptedName  = $user['encrypted_full_name']
             ? $this->crypto->decrypt($user['encrypted_full_name'])
@@ -205,13 +155,8 @@ class AuthService
         ];
     }
 
-    /**
-     * Refresh access token using refresh token from cookie
-     * Rotates refresh token + regenerates CSRF
-     */
     public function refreshAccessToken(string $rawRefreshToken): array
     {
-        // Validate refresh token via TokenService -> Model
         $tokenRecord = $this->tokenService->validateRefreshToken($rawRefreshToken);
 
         if (!$tokenRecord) {
@@ -221,21 +166,13 @@ class AuthService
         $userId   = (int) $tokenRecord['user_id'];
         $tenantId = (int) $tokenRecord['tenant_id'];
 
-        // Get fresh user data
-        $user = $this->db->fetch(
-            'SELECT u.*, r.role_name 
-             FROM users u 
-             JOIN roles r ON u.role_id = r.id 
-             WHERE u.id = :id AND u.deleted_at IS NULL',
-            ['id' => $userId]
-        );
+        $user = $this->authModel->findById($userId);
 
         if (!$user || $user['status'] !== 'active') {
             $this->tokenService->revokeAllUserTokens($userId);
             throw new \RuntimeException('User not found or inactive');
         }
 
-        // Rotate refresh token (revoke old, create new, regenerate CSRF)
         $rotationResult = $this->tokenService->rotateRefreshToken(
             $rawRefreshToken,
             $userId,
@@ -246,11 +183,9 @@ class AuthService
             throw new \RuntimeException('Token rotation failed');
         }
 
-        // Get fresh permissions for the new access token
         $permissions    = $this->permissionModel->getByRoleId((int) $user['role_id']);
         $permissionKeys = array_column($permissions, 'permission_key');
 
-        // Generate new access token with current role + permissions
         $accessToken = $this->jwt->generateAccessToken([
             'sub'         => $userId,
             'tenant_id'   => $tenantId,
@@ -260,7 +195,6 @@ class AuthService
             'permissions' => $permissionKeys,
         ]);
 
-        // Set new refresh token cookie
         $this->tokenService->setRefreshTokenCookie($rotationResult['refresh_token']);
 
         app_log("Token refreshed for user: {$user['username']} (ID: {$userId})");
@@ -273,9 +207,6 @@ class AuthService
         ];
     }
 
-    /**
-     * Logout: revoke refresh token, clear cookie, destroy CSRF session
-     */
     public function logout(?string $rawRefreshToken, int $userId): void
     {
         if ($rawRefreshToken) {
@@ -283,16 +214,11 @@ class AuthService
         }
 
         $this->tokenService->clearRefreshTokenCookie();
-
-        // Destroy CSRF token from session
         CsrfGuard::destroy();
 
         app_log("User logged out (ID: {$userId})");
     }
 
-    /**
-     * Logout from all devices: revoke ALL refresh tokens
-     */
     public function logoutAll(int $userId): void
     {
         $this->tokenService->revokeAllUserTokens($userId);
@@ -302,15 +228,9 @@ class AuthService
         app_log("User logged out from all devices (ID: {$userId})");
     }
 
-    /**
-     * Change password: update hash, revoke all tokens (force re-login)
-     */
     public function changePassword(int $userId, string $currentPassword, string $newPassword): void
     {
-        $user = $this->db->fetch(
-            'SELECT id, password_hash FROM users WHERE id = :id AND deleted_at IS NULL',
-            ['id' => $userId]
-        );
+        $user = $this->authModel->findPasswordById($userId);
 
         if (!$user) {
             throw new \RuntimeException('User not found');
@@ -326,12 +246,8 @@ class AuthService
             'threads'     => 3,
         ]);
 
-        $this->db->execute(
-            'UPDATE users SET password_hash = :hash, updated_at = NOW() WHERE id = :id',
-            ['hash' => $newHash, 'id' => $userId]
-        );
+        $this->authModel->updatePassword($userId, $newHash);
 
-        // Revoke all refresh tokens (force re-login on all devices)
         $this->tokenService->revokeAllUserTokens($userId);
         CsrfGuard::destroy();
 

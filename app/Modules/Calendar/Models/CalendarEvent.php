@@ -1,12 +1,12 @@
 <?php
 namespace App\Modules\Calendar\Models;
 
-use App\Core\Database;
 use App\Core\Security\CryptoService;
 
 class CalendarEvent
 {
-    private Database $db;
+    private function db(): \App\Core\TenantDatabase { return tenant_db(); }
+
     private CryptoService $crypto;
 
     private const STATUS_COLORS = [
@@ -19,7 +19,6 @@ class CalendarEvent
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
         $this->crypto = new CryptoService();
     }
 
@@ -53,7 +52,7 @@ class CalendarEvent
             $params['doctor_id'] = $doctorId;
         }
 
-        $rows = $this->db->fetchAll(
+        $rows = $this->db()->fetchAll(
             $this->baseSelect() . " WHERE {$where} ORDER BY a.appointment_time ASC",
             $params
         );
@@ -68,7 +67,7 @@ class CalendarEvent
         if ($status) { $where .= ' AND a.status = :status'; $params['status'] = $status; }
         if ($doctorId) { $where .= ' AND a.doctor_id = :doctor_id'; $params['doctor_id'] = $doctorId; }
 
-        $rows = $this->db->fetchAll(
+        $rows = $this->db()->fetchAll(
             $this->baseSelect() . " WHERE {$where} ORDER BY a.appointment_time ASC",
             $params
         );
@@ -77,13 +76,13 @@ class CalendarEvent
 
     public function getTooltipDetail(int $appointmentId, int $tenantId): ?array
     {
-        $row = $this->db->fetch(
+        $row = $this->db()->fetch(
             $this->baseSelect() . " WHERE a.id = :id AND a.tenant_id = :tid AND a.deleted_at IS NULL",
             ['id' => $appointmentId, 'tid' => $tenantId]
         );
         if (!$row) return null;
 
-        $rxCount = $this->db->fetch(
+        $rxCount = $this->db()->fetch(
             'SELECT COUNT(*) AS total FROM prescriptions WHERE appointment_id = :aid AND tenant_id = :tid',
             ['aid' => $appointmentId, 'tid' => $tenantId]
         );
@@ -109,7 +108,7 @@ class CalendarEvent
         $startDate = sprintf('%04d-%02d-01', $year, $month);
         $endDate = date('Y-m-t', strtotime($startDate));
 
-        $rows = $this->db->fetchAll(
+        $rows = $this->db()->fetchAll(
             'SELECT DATE(appointment_time) AS day, status, COUNT(*) AS total
              FROM appointments
              WHERE tenant_id = :tid AND DATE(appointment_time) >= :start
@@ -136,7 +135,6 @@ class CalendarEvent
         $endDt = clone $startDt;
         $endDt->modify('+30 minutes');
 
-        // Decrypt fields
         $patientName = 'Unknown Patient';
         $reason = null;
         $patientPhone = null;
@@ -144,21 +142,11 @@ class CalendarEvent
         $doctorEmail = null;
 
         try {
-            if (!empty($row['enc_patient_name'])) {
-                $patientName = $this->crypto->decrypt($row['enc_patient_name']);
-            }
-            if (!empty($row['encrypted_reason'])) {
-                $reason = $this->crypto->decrypt($row['encrypted_reason']);
-            }
-            if (!empty($row['enc_patient_phone'])) {
-                $patientPhone = $this->crypto->decrypt($row['enc_patient_phone']);
-            }
-            if (!empty($row['enc_patient_email'])) {
-                $patientEmail = $this->crypto->decrypt($row['enc_patient_email']);
-            }
-            if (!empty($row['enc_doctor_email'])) {
-                $doctorEmail = $this->crypto->decrypt($row['enc_doctor_email']);
-            }
+            if (!empty($row['enc_patient_name']))  $patientName  = $this->crypto->decrypt($row['enc_patient_name']);
+            if (!empty($row['encrypted_reason']))  $reason       = $this->crypto->decrypt($row['encrypted_reason']);
+            if (!empty($row['enc_patient_phone'])) $patientPhone = $this->crypto->decrypt($row['enc_patient_phone']);
+            if (!empty($row['enc_patient_email'])) $patientEmail = $this->crypto->decrypt($row['enc_patient_email']);
+            if (!empty($row['enc_doctor_email']))  $doctorEmail  = $this->crypto->decrypt($row['enc_doctor_email']);
         } catch (\Exception $e) {
             app_log('Calendar event decrypt error: ' . $e->getMessage(), 'ERROR');
         }

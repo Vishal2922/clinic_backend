@@ -1,15 +1,11 @@
 <?php
 namespace App\Modules\Prescriptions\Models;
 
-use App\Core\Database;
-
 class Prescription
 {
-    private Database $db;
-
-    public function __construct()
+    private function db(): \App\Core\TenantDatabase
     {
-        $this->db = Database::getInstance();
+        return tenant_db();
     }
 
     public function create(array $data): int
@@ -24,7 +20,7 @@ class Prescription
             :duration_days, :notes, 'pending'
         )";
 
-        return $this->db->insert($sql, [
+        return $this->db()->insert($sql, [
             'tenant_id'      => $data['tenant_id'],
             'appointment_id' => $data['appointment_id'] ?? null,
             'patient_id'     => $data['patient_id'],
@@ -38,7 +34,7 @@ class Prescription
 
     public function findById(int $id, int $tenantId): ?array
     {
-        return $this->db->fetch(
+        return $this->db()->fetch(
             'SELECT * FROM prescriptions WHERE id = :id AND tenant_id = :tenant_id',
             ['id' => $id, 'tenant_id' => $tenantId]
         );
@@ -68,7 +64,7 @@ class Prescription
 
         $setStr = implode(', ', $sets);
 
-        return $this->db->execute(
+        return $this->db()->execute(
             "UPDATE prescriptions SET $setStr WHERE id = :id AND tenant_id = :tenant_id",
             $params
         );
@@ -81,7 +77,7 @@ class Prescription
 
     public function getAllByTenant(int $tenantId): array
     {
-        return $this->db->fetchAll(
+        return $this->db()->fetchAll(
             'SELECT * FROM prescriptions WHERE tenant_id = :tenant_id ORDER BY created_at DESC',
             ['tenant_id' => $tenantId]
         );
