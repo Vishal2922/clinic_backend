@@ -1,23 +1,25 @@
 <?php
 namespace App\Modules\Patients\Models;
 
-use App\Core\Database;
 use App\Core\Security\CryptoService;
 
 class Patient
 {
-    private Database $db;
     private CryptoService $crypto;
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
         $this->crypto = new CryptoService();
+    }
+
+    private function db(): \App\Core\TenantDatabase
+    {
+        return tenant_db();
     }
 
     public function findById(int $id, int $tenantId): ?array
     {
-        $patient = $this->db->fetch(
+        $patient = $this->db()->fetch(
             'SELECT * FROM patients WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
             ['id' => $id, 'tid' => $tenantId]
         );
@@ -28,13 +30,13 @@ class Patient
     {
         $offset = ($page - 1) * $perPage;
 
-        $countResult = $this->db->fetch(
+        $countResult = $this->db()->fetch(
             'SELECT COUNT(*) as total FROM patients WHERE tenant_id = :tid AND deleted_at IS NULL',
             ['tid' => $tenantId]
         );
         $total = (int) ($countResult['total'] ?? 0);
 
-        $patients = $this->db->fetchAll(
+        $patients = $this->db()->fetchAll(
             'SELECT * FROM patients WHERE tenant_id = :tid AND deleted_at IS NULL
              ORDER BY created_at DESC LIMIT :limit OFFSET :offset',
             ['tid' => $tenantId, 'limit' => $perPage, 'offset' => $offset]
@@ -55,7 +57,7 @@ class Patient
 
     public function create(array $data): int
     {
-        return $this->db->insert(
+        return $this->db()->insert(
             'INSERT INTO patients (tenant_id, encrypted_name, name_hash, encrypted_phone, phone_hash,
              encrypted_email, email_hash, encrypted_medical_history, encrypted_date_of_birth,
              encrypted_gender, encrypted_blood_group, status, created_at, updated_at)
@@ -132,7 +134,7 @@ class Patient
         $sets[] = 'updated_at = NOW()';
         $setStr = implode(', ', $sets);
 
-        $affected = $this->db->execute(
+        $affected = $this->db()->execute(
             "UPDATE patients SET $setStr WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL",
             $params
         );
@@ -141,7 +143,7 @@ class Patient
 
     public function softDelete(int $id, int $tenantId): bool
     {
-        $affected = $this->db->execute(
+        $affected = $this->db()->execute(
             'UPDATE patients SET deleted_at = NOW(), status = :status
              WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
             ['status' => 'inactive', 'id' => $id, 'tid' => $tenantId]
@@ -151,7 +153,7 @@ class Patient
 
     public function hasScheduledAppointments(int $patientId, int $tenantId): bool
     {
-        $result = $this->db->fetch(
+        $result = $this->db()->fetch(
             'SELECT COUNT(*) as count FROM appointments
              WHERE patient_id = :pid AND tenant_id = :tid AND status = :status AND deleted_at IS NULL',
             ['pid' => $patientId, 'tid' => $tenantId, 'status' => 'scheduled']
@@ -172,13 +174,13 @@ class Patient
             $params['p_hash'] = $queryHash;
         }
 
-        $countResult = $this->db->fetch(
+        $countResult = $this->db()->fetch(
             "SELECT COUNT(*) as total FROM patients WHERE $where",
             $params
         );
         $total = (int) ($countResult['total'] ?? 0);
 
-        $patients = $this->db->fetchAll(
+        $patients = $this->db()->fetchAll(
             "SELECT * FROM patients WHERE $where ORDER BY created_at DESC LIMIT :limit OFFSET :offset",
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])
         );
@@ -199,51 +201,25 @@ class Patient
     private function decryptPatient(array $patient): array
     {
         try {
-            if (!empty($patient['encrypted_name'])) {
-                $patient['name'] = $this->crypto->decrypt($patient['encrypted_name']);
-            }
-            if (!empty($patient['encrypted_phone'])) {
-                $patient['phone'] = $this->crypto->decrypt($patient['encrypted_phone']);
-            }
-            if (!empty($patient['encrypted_email'])) {
-                $patient['email'] = $this->crypto->decrypt($patient['encrypted_email']);
-            }
-            if (!empty($patient['encrypted_medical_history'])) {
-                $patient['medical_history'] = $this->crypto->decrypt($patient['encrypted_medical_history']);
-            }
-            if (!empty($patient['encrypted_date_of_birth'])) {
-                $patient['date_of_birth'] = $this->crypto->decrypt($patient['encrypted_date_of_birth']);
-            }
-            if (!empty($patient['encrypted_gender'])) {
-                $patient['gender'] = $this->crypto->decrypt($patient['encrypted_gender']);
-            }
-            if (!empty($patient['encrypted_blood_group'])) {
-                $patient['blood_group'] = $this->crypto->decrypt($patient['encrypted_blood_group']);
-            }
-            if (!empty($patient['encrypted_address'])) {
-                $patient['address'] = $this->crypto->decrypt($patient['encrypted_address']);
-            }
-            if (!empty($patient['encrypted_emergency_contact'])) {
-                $patient['emergency_contact'] = $this->crypto->decrypt($patient['encrypted_emergency_contact']);
-            }
+            if (!empty($patient['encrypted_name']))           $patient['name']             = $this->crypto->decrypt($patient['encrypted_name']);
+            if (!empty($patient['encrypted_phone']))          $patient['phone']            = $this->crypto->decrypt($patient['encrypted_phone']);
+            if (!empty($patient['encrypted_email']))          $patient['email']            = $this->crypto->decrypt($patient['encrypted_email']);
+            if (!empty($patient['encrypted_medical_history']))$patient['medical_history']  = $this->crypto->decrypt($patient['encrypted_medical_history']);
+            if (!empty($patient['encrypted_date_of_birth'])) $patient['date_of_birth']    = $this->crypto->decrypt($patient['encrypted_date_of_birth']);
+            if (!empty($patient['encrypted_gender']))         $patient['gender']           = $this->crypto->decrypt($patient['encrypted_gender']);
+            if (!empty($patient['encrypted_blood_group']))    $patient['blood_group']      = $this->crypto->decrypt($patient['encrypted_blood_group']);
+            if (!empty($patient['encrypted_address']))        $patient['address']          = $this->crypto->decrypt($patient['encrypted_address']);
+            if (!empty($patient['encrypted_emergency_contact'])) $patient['emergency_contact'] = $this->crypto->decrypt($patient['encrypted_emergency_contact']);
         } catch (\Exception $e) {
             app_log('Patient decryption error ID ' . ($patient['id'] ?? '?') . ': ' . $e->getMessage(), 'ERROR');
         }
 
         unset(
-            $patient['encrypted_name'],
-            $patient['encrypted_phone'],
-            $patient['encrypted_email'],
-            $patient['encrypted_medical_history'],
-            $patient['encrypted_date_of_birth'],
-            $patient['encrypted_dob'],
-            $patient['encrypted_gender'],
-            $patient['encrypted_blood_group'],
-            $patient['encrypted_address'],
-            $patient['encrypted_emergency_contact'],
-            $patient['name_hash'],
-            $patient['phone_hash'],
-            $patient['email_hash']
+            $patient['encrypted_name'], $patient['encrypted_phone'], $patient['encrypted_email'],
+            $patient['encrypted_medical_history'], $patient['encrypted_date_of_birth'],
+            $patient['encrypted_dob'], $patient['encrypted_gender'], $patient['encrypted_blood_group'],
+            $patient['encrypted_address'], $patient['encrypted_emergency_contact'],
+            $patient['name_hash'], $patient['phone_hash'], $patient['email_hash']
         );
 
         return $patient;

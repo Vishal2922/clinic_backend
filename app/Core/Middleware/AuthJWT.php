@@ -44,10 +44,10 @@ class AuthJWT
         // Set full auth user data including role and permissions
         $request->setAttribute('auth_user', [
             'user_id'     => (int) $payload['sub'],
-            'tenant_id'   => (int) $payload['tenant_id'],
-            'role_id'     => (int) $payload['role_id'],
-            'role_name'   => $payload['role_name'],
-            'username'    => $payload['username'],
+            'tenant_id'   => isset($payload['tenant_id']) ? (int) $payload['tenant_id'] : 0,
+            'role_id'     => isset($payload['role_id'])   ? (int) $payload['role_id']   : 0,
+            'role_name'   => $payload['role_name'] ?? 'Guest',
+            'username'    => $payload['username']  ?? '',
             'permissions' => $payload['permissions'] ?? [],
         ]);
     }
