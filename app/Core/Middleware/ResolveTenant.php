@@ -25,9 +25,12 @@ class ResolveTenant
         $tenantCode = $this->resolveFromSubdomain() ?? $request->getHeader('x-tenant-id');
 
         if (!$tenantCode) {
+            app_log("[ResolveTenant] Missing tenant identifier.", 'WARNING');
             Response::error('Missing tenant identifier. Provide a subdomain or X-Tenant-ID header.', 400);
             return;
         }
+
+        app_log("[ResolveTenant] Attempting to resolve tenant: " . $tenantCode);
 
         $masterDb = MasterDatabase::getInstance();
         $tenant   = $masterDb->fetch(
@@ -38,7 +41,10 @@ class ResolveTenant
             ['code' => $tenantCode]
         );
 
+        app_log("[ResolveTenant] Query result for code '{$tenantCode}': " . ($tenant ? "Tenant Found (ID: " . $tenant['id'] . ")" : "NOT FOUND"));
+
         if (!$tenant) {
+            app_log("[ResolveTenant] Invalid tenant code: " . $tenantCode, 'ERROR');
             Response::error('Invalid tenant', 401);
             return;
         }
