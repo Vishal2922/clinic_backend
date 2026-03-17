@@ -39,6 +39,19 @@ function sanitize(string $input): string
 }
 
 /**
+ * Get the current tenant's TenantDatabase instance.
+ * Resolves the active tenant code from the global registry set by ResolveTenant middleware.
+ */
+function tenant_db(): \App\Core\TenantDatabase
+{
+    $tenantCode = \App\Core\TenantRegistry::getCode();
+    if (!$tenantCode) {
+        throw new \RuntimeException('Tenant not resolved. Ensure ResolveTenant middleware ran before this call.');
+    }
+    return \App\Core\TenantDatabase::getInstance($tenantCode);
+}
+
+/**
  * Generate UUID v4
  */
 function uuid_v4(): string

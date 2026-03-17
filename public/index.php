@@ -15,6 +15,12 @@ ini_set('display_startup_errors', 1);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
+if (file_exists(dirname(__DIR__) . '/app/Helpers/functions.php')) {
+    require_once dirname(__DIR__) . '/app/Helpers/functions.php';
+    if (!defined('BASE_PATH')) define('BASE_PATH', dirname(__DIR__));
+    app_log("[TOP] Incoming: " . $_SERVER['REQUEST_METHOD'] . " " . $_SERVER['REQUEST_URI']);
+}
+
 // 2. Define base path
 define('BASE_PATH', dirname(__DIR__));
 
@@ -56,24 +62,38 @@ if (class_exists('\App\Helpers\EnvLoader')) {
     \App\Helpers\EnvLoader::load(BASE_PATH . '/.env');
 }
 
+// 6. FIX: Handle CORS preflight BEFORE session_start() and DB init.
+// OPTIONS preflight must never fail due to DB/session issues —
+// browsers require a 200 with correct CORS headers or they block ALL subsequent requests,
+// causing the frontend to see "network error" with error.response = undefined.
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+    header("Access-Control-Allow-Origin: $origin");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Tenant-ID");
+    header("Access-Control-Max-Age: 86400");
+    http_response_code(200);
+    exit;
+}
+
 // Session start for CSRF
 session_start();
 
-// 6. Initialize Core Services
+// 7. Initialize Core Services
 try {
+    app_log("[bootstrap] Incoming: " . $_SERVER['REQUEST_METHOD'] . " " . $_SERVER['REQUEST_URI']);
+    if (function_exists('getallheaders')) {
+        foreach (getallheaders() as $name => $val) {
+            app_log("[bootstrap] Header: $name = $val");
+        }
+    }
+
     $dbConfig = file_exists(BASE_PATH . '/config/database.php') ? require BASE_PATH . '/config/database.php' : [];
     $database = \App\Core\Database::getInstance($dbConfig);
 
     $request  = new \App\Core\Request();
     $response = new \App\Core\Response();
-
-    // 7. FIX #1: Handle CORS preflight — getMethod() returns UPPERCASE, so compare 'OPTIONS'
-    if ($request->getMethod() === 'OPTIONS') {
-        $response->setCorsHeaders();
-        $response->setStatusCode(200);
-        $response->send();
-        exit;
-    }
 
     // 8. Initialize Router
     $router = new \App\Core\Router($request, $response);

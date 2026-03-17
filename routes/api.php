@@ -177,6 +177,7 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
     $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
     $router->post('/logout',          [SettingsController::class, 'logout'],         [$allAuthenticated, $csrf]);
     $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],      [$allAuthenticated, $csrf]);
+  
 
     $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'], [$allAuthenticated]);
 
@@ -185,11 +186,47 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 
     $router->get('/audit-log',         [SettingsController::class, 'auditLog'],     [$adminOnly]);
     $router->get('/audit-log/actions', [SettingsController::class, 'auditActions'], [$adminOnly]);
+
 });
 
 // rotate-tokens uses only $tenant middleware (no $auth) because the access token
 // may be expired — that is precisely WHY the client is calling this endpoint.
 // Authentication is instead verified via the refresh token cookie itself.
-$router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
+  $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
+
 
 $router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);
+
+// ═══════════════════════════════════════════════════════════
+// SUPER ADMIN MODULE — Platform Control Plane
+// No X-Tenant-ID required. Uses separate JWT scope.
+// ═══════════════════════════════════════════════════════════
+use App\Modules\SuperAdmin\Controllers\SuperAdminAuthController;
+use App\Modules\SuperAdmin\Controllers\TenantController;
+use App\Modules\SuperAdmin\Controllers\SuperAdminDashboardController;
+use App\Core\Middleware\AuthSuperAdmin;
+
+$superAuth = AuthSuperAdmin::class;
+
+// Public: Super Admin Login
+$router->post('/api/super-admin/auth/login', [SuperAdminAuthController::class, 'login']);
+
+// Protected super admin routes
+$router->group(['prefix' => '/api/super-admin', 'middleware' => [$superAuth]], function ($router) {
+
+    $router->get('/auth/me',            [SuperAdminAuthController::class, 'me']);
+    $router->post('/auth/create-admin', [SuperAdminAuthController::class, 'createAdmin']);
+
+    $router->get('/dashboard',  [SuperAdminDashboardController::class, 'index']);
+    $router->get('/audit-log',  [SuperAdminDashboardController::class, 'auditLog']);
+
+    $router->get('/tenants',                     [TenantController::class, 'index']);
+    $router->post('/tenants',                    [TenantController::class, 'store']);
+    $router->get('/tenants/{code}',              [TenantController::class, 'show']);
+    $router->put('/tenants/{code}',              [TenantController::class, 'update']);
+    $router->post('/tenants/{code}/suspend',     [TenantController::class, 'suspend']);
+    $router->post('/tenants/{code}/reactivate',  [TenantController::class, 'reactivate']);
+    $router->post('/tenants/{code}/change-plan', [TenantController::class, 'changePlan']);
+    $router->get('/tenants/{code}/stats',        [TenantController::class, 'stats']);
+    $router->delete('/tenants/{code}',           [TenantController::class, 'destroy']);
+});

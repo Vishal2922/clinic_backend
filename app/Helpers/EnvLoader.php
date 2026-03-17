@@ -47,6 +47,12 @@ class EnvLoader
                  ($value[0] === "'" && $value[strlen($value) - 1] === "'"))
             ) {
                 $value = substr($value, 1, -1);
+            } else {
+                // Strip trailing inline # comments from unquoted values
+                // e.g. "900       # 15 Minutes" -> "900"
+                if (preg_match('/^([^#]*?)\s*#.*$/', $value, $m)) {
+                    $value = trim($m[1]);
+                }
             }
 
             // Convert special values

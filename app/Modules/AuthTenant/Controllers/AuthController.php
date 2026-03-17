@@ -7,17 +7,6 @@ use App\Modules\AuthTenant\Services\AuthService;
 use App\Core\Middleware\CsrfGuard;
 use App\Core\Response;
 
-/**
- * AuthController: Fixed Version.
- * Bugs Fixed:
- * 1. $this->response->success($result, 'message', 201) — data-first argument order.
- *    The static Response::success() takes (message, data, code).
- *    Fixed by calling Response::json() directly with correct structure.
- * 2. After $this->response->error(...) calls, code continued to execute because
- *    static error() calls exit, BUT $this->response->error() was calling a non-existent
- *    instance method. Now all response calls go through static Response:: methods.
- * 3. csrfToken() called $this->response->success([...], 'message') — same argument order bug.
- */
 class AuthController extends Controller
 {
     private AuthService $authService;
@@ -44,6 +33,7 @@ class AuthController extends Controller
 
         if (!empty($errors)) {
             Response::error('Validation failed', 422, $errors);
+            return;
         }
 
         if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $data['password'])) {
@@ -51,11 +41,11 @@ class AuthController extends Controller
                 'Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character.',
                 422
             );
+            return;
         }
 
         try {
             $result = $this->authService->register($data, $tenantId);
-            // FIX #1: Use Response::json() directly to avoid argument-order confusion
             Response::json(['message' => 'User registered successfully', 'data' => $result], 201);
         } catch (\RuntimeException $e) {
             Response::error($e->getMessage(), 409);
@@ -80,11 +70,13 @@ class AuthController extends Controller
 
         if (!empty($errors)) {
             Response::error('Validation failed', 422, $errors);
+            return;
         }
 
         try {
+            // FIX: Removed sanitize() to prevent htmlspecialchars from corrupting valid usernames/emails
             $result = $this->authService->login(
-                sanitize($data['username']),
+                trim($data['username']), 
                 $data['password'],
                 $tenantId
             );
@@ -107,6 +99,7 @@ class AuthController extends Controller
 
         if (!$refreshToken) {
             Response::error('Refresh token not found in cookie.', 401);
+            return;
         }
 
         try {
@@ -169,10 +162,12 @@ class AuthController extends Controller
 
         if (!empty($errors)) {
             Response::error('Validation failed', 422, $errors);
+            return;
         }
 
         if ($data['current_password'] === $data['new_password']) {
             Response::error('New password must be different from current password.', 422);
+            return;
         }
 
         if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $data['new_password'])) {
@@ -180,6 +175,7 @@ class AuthController extends Controller
                 'Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character.',
                 422
             );
+            return;
         }
 
         try {
@@ -199,7 +195,6 @@ class AuthController extends Controller
 
     /**
      * GET /api/auth/csrf-token
-     * FIX #3: Argument order corrected.
      */
     public function csrfToken(): void
     {

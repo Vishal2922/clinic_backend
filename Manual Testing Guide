@@ -1,0 +1,555 @@
+# Manual API Testing Guide — 52 Endpoints (Postman)
+
+> **Base URL**: `http://localhost/clinic_backend/public`
+> **Tool**: Postman (or any REST client)
+
+---
+
+## Setup Instructions
+
+1. Open **Postman** and create a new Collection called `Clinic API Tests`
+2. Set a **Collection Variable** `base` = `http://localhost/clinic_backend/public`
+3. After each login, copy the `access_token` from the response and save it
+4. For CSRF-protected endpoints, first call the CSRF token endpoint, then include the token in the `X-CSRF-TOKEN` header
+
+> [!IMPORTANT]
+> **CSRF Rule**: Any POST/PUT/PATCH/DELETE on tenant endpoints requires the `X-CSRF-TOKEN` header. You must call the CSRF endpoint first **in the same browser/Postman session** (cookies must persist). In Postman, ensure "Automatically follow redirects" and "Send cookies" are ON.
+
+---
+
+## Module 1: Super Admin (T01–T12)
+
+### T01 — Super Admin Login
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/super-admin/auth/login` |
+| **Body (JSON)** | `{"email": "superadmin@clinic.io", "password": "SuperAdmin@2026"}` |
+| **Expected** | `200` — Save `data.access_token` as `SA_TOKEN` |
+
+### T02 — Create Tenant
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/super-admin/tenants` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "tenant_code": "my_test_clinic",
+  "name": "My Test Clinic",
+  "email": "info@mytestclinic.com",
+  "phone": "+91 9876543210",
+  "city": "Chennai",
+  "state": "Tamil Nadu",
+  "country": "IN",
+  "plan": "standard",
+  "admin_email": "admin@mytestclinic.com",
+  "admin_name": "Clinic Admin"
+}
+```
+| **Expected** | `201` — **Save** `admin_credentials.password` and note username = `mytestclinic_admin` |
+
+### T03 — Super Admin Me
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/auth/me` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns admin profile |
+
+### T04 — SA Dashboard
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/dashboard` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns tenant counts, stats |
+
+### T05 — SA List Tenants
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/tenants` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns paginated tenant list |
+
+### T06 — SA Audit Log
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/audit-log` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns audit entries |
+
+### T07 — SA Show Tenant
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns tenant details |
+
+### T08 — SA Tenant Stats
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic/stats` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — Returns user/patient counts |
+
+### T09 — SA Update Tenant
+| Field | Value |
+|-------|-------|
+| **Method** | `PUT` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Body** | `{"name": "My Updated Clinic"}` |
+| **Expected** | `200` — "Tenant updated successfully" |
+
+### T10 — SA Suspend Tenant
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic/suspend` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Body** | `{"reason": "testing suspension"}` |
+| **Expected** | `200` — "Tenant has been suspended" |
+
+### T11 — SA Reactivate Tenant
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic/reactivate` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Expected** | `200` — "Tenant has been reactivated" |
+
+### T12 — SA Change Plan
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/super-admin/tenants/my_test_clinic/change-plan` |
+| **Headers** | `Authorization: Bearer {{SA_TOKEN}}` |
+| **Body** | `{"plan": "professional"}` |
+| **Expected** | `200` — "Tenant plan updated" |
+
+---
+
+## Module 2: Tenant Auth (T13–T17)
+
+> [!IMPORTANT]
+> All tenant endpoints require the header `X-Tenant-ID: my_test_clinic`
+
+### T13 — Tenant Admin Login
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/auth/login` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` |
+| **Body** | `{"username": "mytestclinic_admin", "password": "THE_PASSWORD_FROM_T02"}` |
+| **Expected** | `200` — Save `data.access_token` as `TENANT_TOKEN` |
+
+### T14 — Get CSRF Token
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/auth/csrf-token` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` ⏎ `Authorization: Bearer {{TENANT_TOKEN}}` |
+| **Expected** | `200` — Save `data.csrf_token` as `CSRF_TOKEN` |
+
+### T15 — Auth Me
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/auth/me` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` ⏎ `Authorization: Bearer {{TENANT_TOKEN}}` |
+| **Expected** | `200` — Returns `user_id`, `role_name`, `tenant_id` |
+
+### T16 — Register Provider (Doctor)
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/auth/register` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` |
+| **Body** | ⬇️ |
+```json
+{
+  "username": "dr_kumar",
+  "password": "Doctor@123",
+  "email": "dr.kumar@clinic.com",
+  "full_name": "Dr Kumar",
+  "phone": "9876543210",
+  "role_id": 2
+}
+```
+| **Expected** | `201` — "User registered successfully" |
+
+### T17 — Register Nurse
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/auth/register` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` |
+| **Body** | `{"username": "nurse_priya", "password": "Nurse@123", "email": "priya@clinic.com", "full_name": "Nurse Priya", "phone": "8765432100", "role_id": 3}` |
+| **Expected** | `201` |
+
+---
+
+## Module 3: Users & Roles (T18)
+
+### T18 — List Roles
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/users/roles` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` ⏎ `Authorization: Bearer {{TENANT_TOKEN}}` |
+| **Expected** | `200` — Returns Admin, Provider, Nurse, etc. |
+
+---
+
+## Module 4: Patients CRUD (T19–T23)
+
+> Headers for all: `X-Tenant-ID` + `Authorization: Bearer {{TENANT_TOKEN}}`
+> Write ops also need: `X-CSRF-TOKEN: {{CSRF_TOKEN}}`
+
+### T19 — List Patients
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/patients` |
+| **Expected** | `200` — Empty list initially |
+
+### T20 — Create Patient
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/patients` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "name": "Rajesh Kumar",
+  "phone": "9123456789",
+  "medical_history": "Diabetes Type 2",
+  "email": "rajesh@example.com",
+  "dob": "1985-05-15",
+  "gender": "male",
+  "blood_group": "B+"
+}
+```
+| **Expected** | `201` — "Patient created successfully" |
+
+### T21 — Get Patient by ID
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/patients/1` |
+| **Expected** | `200` — Returns patient details (decrypted) |
+
+### T22 — Update Patient
+| Field | Value |
+|-------|-------|
+| **Method** | `PUT` |
+| **URL** | `{{base}}/api/patients/1` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | `{"name": "Rajesh Kumar Updated", "phone": "9999999999"}` |
+| **Expected** | `200` — "Patient record updated" |
+
+### T23 — Delete Patient (Soft)
+| Field | Value |
+|-------|-------|
+| **Method** | `DELETE` |
+| **URL** | `{{base}}/api/patients/1` |
+| **Expected** | `200` — "Patient moved to trash" |
+
+---
+
+## Module 5: Appointments CRUD (T24–T27)
+
+### T24 — List Appointments
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/appointments` |
+| **Headers** | Standard auth headers |
+| **Expected** | `200` — Empty list initially |
+
+### T25 — Book Appointment
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/appointments/book` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "patient_id": 1,
+  "doctor_id": 1,
+  "appointment_time": "2026-03-10 10:30:00",
+  "reason": "Regular checkup"
+}
+```
+| **Expected** | `201` — "Appointment booked successfully" |
+
+### T26 — Update Appointment Status
+| Field | Value |
+|-------|-------|
+| **Method** | `PATCH` |
+| **URL** | `{{base}}/api/appointments/1/status` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | `{"status": "arrived"}` |
+| **Expected** | `200` — "Status updated to arrived" |
+
+### T27 — Cancel Appointment
+| Field | Value |
+|-------|-------|
+| **Method** | `DELETE` |
+| **URL** | `{{base}}/api/appointments/1/cancel` |
+| **Headers** | Standard auth headers |
+| **Expected** | `200` — "Appointment cancelled" |
+
+---
+
+## Module 6: Prescriptions (T28–T30) — Provider Role Required
+
+> [!WARNING]
+> Prescriptions require **Provider** role. Login as `dr_kumar` first.
+
+### T28 — Login as Provider + Get CSRF
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/auth/login` |
+| **Headers** | `X-Tenant-ID: my_test_clinic` |
+| **Body** | `{"username": "dr_kumar", "password": "Doctor@123"}` |
+| **Expected** | `200` — Save as `DR_TOKEN`. Then call `GET /api/auth/csrf-token` with this token → save as `DR_CSRF` |
+
+### T29 — Create Prescription
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/prescriptions` |
+| **Headers** | `X-Tenant-ID` ⏎ `Authorization: Bearer {{DR_TOKEN}}` ⏎ `X-CSRF-TOKEN: {{DR_CSRF}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "patient_id": 1,
+  "medicine_name": "Amoxicillin 500mg",
+  "dosage": "1 tablet 3 times daily",
+  "duration_days": 7,
+  "notes": "Take after meals"
+}
+```
+| **Expected** | `201` — "Prescription encrypted and saved" |
+
+### T30 — Update Prescription
+| Field | Value |
+|-------|-------|
+| **Method** | `PUT` |
+| **URL** | `{{base}}/api/prescriptions/1` |
+| **Headers** | Same as T29 |
+| **Body** | `{"status": "dispensed"}` |
+| **Expected** | `200` — "Prescription updated" |
+
+---
+
+## Module 7: Dashboard (T31)
+
+### T31 — Dashboard Stats
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/dashboard/stats` |
+| **Headers** | Admin auth headers |
+| **Expected** | `200` — Returns `total_patients`, `pending_prescriptions`, `upcoming_appointments` |
+
+---
+
+## Module 8: Communication / Notes (T32–T34) — Provider/Nurse Role
+
+> Use the **Provider** token (`DR_TOKEN`) for these.
+
+### T32 — Get Notes for Appointment
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/communication/appointments/1/notes` |
+| **Headers** | `Authorization: Bearer {{DR_TOKEN}}` + `X-Tenant-ID` |
+| **Expected** | `200` — Empty or list of notes |
+
+### T33 — Create Note
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/communication/appointments/1/notes` |
+| **Headers** | + `X-CSRF-TOKEN: {{DR_CSRF}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "message": "Patient vitals are stable. BP: 120/80",
+  "note_type": "clinical",
+  "visible_to_role": "all"
+}
+```
+| **Expected** | `201` — "Note created successfully" |
+
+### T34 — Note History
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/communication/appointments/1/notes/history` |
+| **Headers** | Provider auth headers |
+| **Expected** | `200` — Paginated history |
+
+---
+
+## Module 9: Billing (T35–T37)
+
+> Switch back to **Admin** token (`TENANT_TOKEN`).
+
+### T35 — Billing Summary
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/billing/summary` |
+| **Expected** | `200` — Returns totals |
+
+### T36 — List Invoices
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **URL** | `{{base}}/api/billing/invoices` |
+| **Expected** | `200` — Empty or invoice list |
+
+### T37 — Create Invoice
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/billing/invoices` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | `{"patient_id": 1, "amount": 1500, "tax_percent": 18}` |
+| **Expected** | `201` — "Invoice generated successfully" |
+
+---
+
+## Module 10: Staff CRUD (T38–T43) — Admin Only
+
+### T38 — List Staff
+| **Method** | `GET` | **URL** | `{{base}}/api/staff` |
+| **Expected** | `200` |
+
+### T39 — Staff Departments
+| **Method** | `GET` | **URL** | `{{base}}/api/staff/departments` |
+| **Expected** | `200` |
+
+### T40 — Create Staff
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/staff` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | `{"user_id": 2, "department": "Cardiology", "specialization": "Heart Surgery"}` |
+| **Expected** | `201` |
+
+### T41 — Get Staff by ID
+| **Method** | `GET` | **URL** | `{{base}}/api/staff/1` |
+| **Expected** | `200` |
+
+### T42 — Update Staff
+| Field | Value |
+|-------|-------|
+| **Method** | `PUT` |
+| **URL** | `{{base}}/api/staff/1` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | `{"department": "Neurology", "specialization": "Brain Surgery"}` |
+| **Expected** | `200` |
+
+### T43 — Delete Staff (Soft)
+| **Method** | `DELETE` | **URL** | `{{base}}/api/staff/1` |
+| **Expected** | `200` |
+
+---
+
+## Module 11: Calendar (T44–T47)
+
+### T44 — Events by Date
+| **Method** | `GET` | **URL** | `{{base}}/api/calendar/events?date=2026-03-10` |
+| **Expected** | `200` |
+
+### T45 — Events by Range
+| **Method** | `GET` | **URL** | `{{base}}/api/calendar/range?start_date=2026-03-01&end_date=2026-03-31` |
+| **Expected** | `200` |
+
+### T46 — Monthly Summary
+| **Method** | `GET` | **URL** | `{{base}}/api/calendar/monthly?year=2026&month=3` |
+| **Expected** | `200` |
+
+### T47 — Doctor Schedule
+| **Method** | `GET` | **URL** | `{{base}}/api/calendar/doctor/1?start_date=2026-03-01&end_date=2026-03-31` |
+| **Expected** | `200` |
+
+---
+
+## Module 12: Settings & Security (T48–T52)
+
+### T48 — List Sessions
+| **Method** | `GET` | **URL** | `{{base}}/api/settings/sessions` |
+| **Expected** | `200` |
+
+### T49 — Audit Log
+| **Method** | `GET` | **URL** | `{{base}}/api/settings/audit-log` |
+| **Expected** | `200` |
+
+### T50 — Audit Actions
+| **Method** | `GET` | **URL** | `{{base}}/api/settings/audit-log/actions` |
+| **Expected** | `200` |
+
+### T51 — Change Password
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **URL** | `{{base}}/api/settings/change-password` |
+| **Headers** | + `X-CSRF-TOKEN: {{CSRF_TOKEN}}` |
+| **Body** | ⬇️ |
+```json
+{
+  "current_password": "THE_ORIGINAL_PASSWORD",
+  "new_password": "NewSecure@456",
+  "new_password_confirmation": "NewSecure@456"
+}
+```
+| **Expected** | `200` — "Password changed successfully" |
+
+### T52 — CSRF Regenerate
+| **Method** | `GET` | **URL** | `{{base}}/api/settings/csrf-token` |
+| **Expected** | `200` — Returns new CSRF token |
+
+---
+
+## Quick Reference: Headers
+
+| Header | When to Use | Value |
+|--------|-------------|-------|
+| `X-Tenant-ID` | All tenant endpoints (not SA) | `my_test_clinic` |
+| `Authorization` | All authenticated endpoints | `Bearer <token>` |
+| `X-CSRF-TOKEN` | All POST/PUT/PATCH/DELETE on tenant | From `/api/auth/csrf-token` |
+| `Content-Type` | All POST/PUT/PATCH with body | `application/json` |
+
+## Role IDs
+
+| ID | Role |
+|----|------|
+| 1 | Admin |
+| 2 | Provider (Doctor) |
+| 3 | Nurse |
+| 4 | Patient |
+| 5 | Pharmacist |
+| 6 | Receptionist |
+
+## Test Order Tips
+
+1. **Always run SA Login (T01) first** — you need the SA token
+2. **Create tenant (T02) once** — note down the password!
+3. **Login + CSRF before writes** — T13 then T14 before any POST/PUT
+4. **Switch to Provider for prescriptions/notes** — T28 before T29–T34
+5. **Change Password last** — T51 invalidates your current credentials

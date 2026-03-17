@@ -55,6 +55,10 @@ class Request
                 if (strpos($key, 'HTTP_') === 0) {
                     $name = strtolower(str_replace('_', '-', substr($key, 5)));
                     $headers[$name] = $value;
+                } elseif ($key === 'CONTENT_TYPE') {
+                    $headers['content-type'] = $value;
+                } elseif ($key === 'CONTENT_LENGTH') {
+                    $headers['content-length'] = $value;
                 }
             }
         }
@@ -101,6 +105,11 @@ class Request
             $contentType = $this->getHeader('content-type') ?? '';
             $raw = file_get_contents('php://input');
             $decoded = json_decode($raw, true);
+
+            app_log("[Request] Method: {$this->method}, Content-Type: {$contentType}, Raw Body Length: " . strlen($raw));
+            if (!$decoded && !empty($raw)) {
+                app_log("[Request] JSON Decode Failed: " . json_last_error_msg());
+            }
 
             if (strpos($contentType, 'application/json') !== false) {
                 return is_array($decoded) ? $decoded : [];
@@ -162,6 +171,16 @@ class Request
     public function getQueryParam(string $key, $default = null)
     {
         return $this->queryParams[$key] ?? $default;
+    }
+
+    /**
+     * getQuery() — Returns ALL query string params as an array.
+     * Used by TenantController and SuperAdminDashboardController for
+     * pagination filters (page, limit, status, search, plan).
+     */
+    public function getQuery(): array
+    {
+        return $this->queryParams;
     }
 
     public function setAttribute(string $key, $value): void
