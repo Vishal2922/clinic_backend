@@ -47,6 +47,7 @@ class JwtService
             'tenant_id'   => $payload['tenant_id'],
             'role_id'     => $payload['role_id'],
             'role_name'   => $payload['role_name'],
+            'scope' => $payload['scope'] ?? 'tenant',
             'username'    => $payload['username'],
             'permissions' => $payload['permissions'] ?? [],
         ];
@@ -99,13 +100,28 @@ class JwtService
         }
 
         // Validate required fields exist
-        $requiredFields = ['sub', 'tenant_id', 'role_id', 'role_name'];
-        foreach ($requiredFields as $field) {
-            if (!isset($payload[$field])) {
+        if (($payload['scope'] ?? 'tenant') === 'tenant') {
+            $requiredFields = ['sub', 'tenant_id', 'role_id', 'role_name'];
+            foreach ($requiredFields as $field) {
+                if (!isset($payload[$field])) {
+                    return null;
+                }
+            }
+        } else {
+            if (!isset($payload['sub'])) {
                 return null;
             }
         }
 
+        return $payload;
+    }
+
+    public function validateToken(string $token): array
+    {
+        $payload = $this->verifyToken($token);
+        if ($payload === null) {
+            throw new \RuntimeException('Invalid or expired token.');
+        }
         return $payload;
     }
 

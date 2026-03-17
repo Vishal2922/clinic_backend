@@ -164,6 +164,16 @@ class Request
         return $this->queryParams[$key] ?? $default;
     }
 
+    /**
+     * getQuery() — Returns ALL query string params as an array.
+     * Used by TenantController and SuperAdminDashboardController for
+     * pagination filters (page, limit, status, search, plan).
+     */
+    public function getQuery(): array
+    {
+        return $this->queryParams;
+    }
+
     public function setAttribute(string $key, $value): void
     {
         $this->attributes[$key] = $value;

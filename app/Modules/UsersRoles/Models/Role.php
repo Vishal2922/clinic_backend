@@ -2,79 +2,73 @@
 
 namespace App\Modules\UsersRoles\Models;
 
-use App\Core\Database;
-
 class Role
 {
-    private Database $db;
-
-    public function __construct()
+    private function db(): \App\Core\TenantDatabase
     {
-        $this->db = Database::getInstance();
+        return tenant_db();
     }
 
-    public function findById(int $id, int $tenantId): ?array
+    public function findById(int $id): ?array
     {
-        return $this->db->fetch(
-            'SELECT * FROM roles WHERE id = :id AND tenant_id = :tid',
-            ['id' => $id, 'tid' => $tenantId]
+        return $this->db()->fetch(
+            'SELECT id, name AS role_name, description, is_system_role FROM roles WHERE id = :id',
+            ['id' => $id]
         );
     }
 
-    public function getAllByTenant(int $tenantId): array
+    public function getAllByTenant(): array
     {
-        return $this->db->fetchAll(
-            'SELECT * FROM roles WHERE tenant_id = :tid ORDER BY role_name',
-            ['tid' => $tenantId]
+        return $this->db()->fetchAll(
+            'SELECT id, name AS role_name, description, is_system_role FROM roles ORDER BY name'
         );
     }
 
-    public function create(string $roleName, string $description, int $tenantId): int
+    public function create(string $roleName, string $description): int
     {
-        return $this->db->insert(
-            'INSERT INTO roles (tenant_id, role_name, description) VALUES (:tid, :name, :desc)',
-            ['tid' => $tenantId, 'name' => $roleName, 'desc' => $description]
+        return $this->db()->insert(
+            'INSERT INTO roles (name, description, created_at) VALUES (:name, :desc, NOW())',
+            ['name' => $roleName, 'desc' => $description]
         );
     }
 
-    public function update(int $id, string $roleName, string $description, int $tenantId): bool
+    public function update(int $id, string $roleName, string $description): bool
     {
-        $affected = $this->db->execute(
-            'UPDATE roles SET role_name = :name, description = :desc WHERE id = :id AND tenant_id = :tid',
-            ['name' => $roleName, 'desc' => $description, 'id' => $id, 'tid' => $tenantId]
+        $affected = $this->db()->execute(
+            'UPDATE roles SET name = :name, description = :desc WHERE id = :id',
+            ['name' => $roleName, 'desc' => $description, 'id' => $id]
         );
         return $affected > 0;
     }
 
-    public function delete(int $id, int $tenantId): bool
+    public function delete(int $id): bool
     {
-        // Check if any users are using this role
-        $count = $this->db->fetch(
-            'SELECT COUNT(*) as count FROM users WHERE role_id = :rid AND tenant_id = :tid AND deleted_at IS NULL',
-            ['rid' => $id, 'tid' => $tenantId]
+        $count = $this->db()->fetch(
+            'SELECT COUNT(*) as count FROM users WHERE role_id = :rid AND deleted_at IS NULL',
+            ['rid' => $id]
         );
 
-        if ((int)$count['count'] > 0) {
+        if ((int) $count['count'] > 0) {
             throw new \RuntimeException('Cannot delete role with assigned users');
         }
 
-        $affected = $this->db->execute(
-            'DELETE FROM roles WHERE id = :id AND tenant_id = :tid',
-            ['id' => $id, 'tid' => $tenantId]
+        $affected = $this->db()->execute(
+            'DELETE FROM roles WHERE id = :id AND is_system_role = 0',
+            ['id' => $id]
         );
         return $affected > 0;
     }
 
-    public function roleNameExists(string $roleName, int $tenantId, ?int $excludeId = null): bool
+    public function roleNameExists(string $roleName, ?int $excludeId = null): bool
     {
-        $sql = 'SELECT id FROM roles WHERE tenant_id = :tid AND role_name = :name';
-        $params = ['tid' => $tenantId, 'name' => $roleName];
+        $sql    = 'SELECT id FROM roles WHERE name = :name';
+        $params = ['name' => $roleName];
 
         if ($excludeId) {
             $sql .= ' AND id != :exclude_id';
             $params['exclude_id'] = $excludeId;
         }
 
-        return (bool) $this->db->fetch($sql, $params);
+        return (bool) $this->db()->fetch($sql, $params);
     }
 }

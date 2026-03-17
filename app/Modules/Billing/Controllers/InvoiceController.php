@@ -8,24 +8,6 @@ use App\Core\Response;
 use App\Modules\Billing\Models\Invoice;
 use App\Modules\Billing\Services\BillingService;
 
-/**
- * InvoiceController
- *
- * Manages invoices and payments within tenant scope.
- *
- * Role access:
- *  Admin    -> full access (list, create, update status, delete, summary)
- *  Provider -> list, create, update status (pending/paid/overdue only)
- *  Patient  -> view own invoices, mark as paid only
- *
- * Routes:
- *  GET    /api/billing/invoices             -> index
- *  POST   /api/billing/invoices             -> store
- *  GET    /api/billing/invoices/{id}        -> show
- *  PATCH  /api/billing/invoices/{id}/status -> updateStatus
- *  DELETE /api/billing/invoices/{id}        -> destroy
- *  GET    /api/billing/summary              -> summary
- */
 class InvoiceController extends Controller
 {
     private Invoice $invoiceModel;
@@ -37,13 +19,6 @@ class InvoiceController extends Controller
         $this->billingService = new BillingService();
     }
 
-    /**
-     * GET /api/billing/invoices
-     * List all invoices for the tenant.
-     * Patients automatically see only their own invoices.
-     *
-     * Query params: patient_id, status, page, per_page
-     */
     public function index(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();
@@ -55,7 +30,6 @@ class InvoiceController extends Controller
         $page      = (int) $request->getQueryParam('page', 1);
         $perPage   = (int) $request->getQueryParam('per_page', 15);
 
-        // Patients can only see their own invoices
         if ($userRole === 'Patient') {
             $patientId = $user['patient_id'] ?? null;
         }
@@ -84,18 +58,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * POST /api/billing/invoices
-     * Generate a new invoice. Roles: Admin, Provider.
-     *
-     * Body params:
-     *  - patient_id     (required)
-     *  - amount         (required) numeric, base amount before tax
-     *  - tax_percent    (optional) default 0
-     *  - appointment_id (optional)
-     *  - due_date       (optional) YYYY-MM-DD
-     *  - notes          (optional)
-     */
     public function store(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();
@@ -116,19 +78,16 @@ class InvoiceController extends Controller
             Response::error('Amount must be greater than zero.', 422);
         }
 
-        // FIX: Use the correct variable $user instead of undefined $authUser
-        // FIX: Use 'user_id' key which is what getAuthUser() returns
         $providerId = $user['user_id'] ?? null;
-        
+
         if (!$providerId) {
             Response::error('Unable to identify provider. Please re-login.', 401);
         }
 
-        // Verify the provider exists in users table
-        $db = \App\Core\Database::getInstance();
+        $db = tenant_db();
         $providerExists = $db->fetch(
-            'SELECT id FROM users WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
-            ['id' => $providerId, 'tid' => $tenantId]
+            'SELECT id FROM users WHERE id = :id AND deleted_at IS NULL',
+            ['id' => $providerId]
         );
 
         if (!$providerExists) {
@@ -150,10 +109,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * GET /api/billing/invoices/{id}
-     * Retrieve a single invoice by ID.
-     */
     public function show(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -167,7 +122,6 @@ class InvoiceController extends Controller
                 Response::error('Invoice not found.', 404);
             }
 
-            // Patients can only view their own invoices
             if ($userRole === 'Patient' && (int) $invoice['patient_id'] !== (int) ($user['patient_id'] ?? 0)) {
                 Response::error('Access denied.', 403);
             }
@@ -183,13 +137,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * PATCH /api/billing/invoices/{id}/status
-     * Update invoice payment status.
-     *
-     * Body params:
-     *  - status (required) pending | paid | overdue | cancelled
-     */
     public function updateStatus(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -198,7 +145,6 @@ class InvoiceController extends Controller
         $data     = $request->getBody();
 
         $errors = $this->validate($data, [
-            // FIX: validation list now matches BillingService::STATUSES and the DB ENUM fully
             'status' => 'required|in:pending,paid,partially_paid,overdue,cancelled,refunded',
         ]);
 
@@ -216,7 +162,6 @@ class InvoiceController extends Controller
                 Response::error("Your role is not permitted to set status to '{$data['status']}'.", 403);
             }
 
-            // Patients can only update their own invoice
             if ($userRole === 'Patient' && (int) $invoice['patient_id'] !== (int) ($user['patient_id'] ?? 0)) {
                 Response::error('Access denied.', 403);
             }
@@ -226,7 +171,6 @@ class InvoiceController extends Controller
             }
 
             $paidAt        = ($data['status'] === 'paid') ? date('Y-m-d H:i:s') : null;
-            // FIX: pass payment_method from request body — original ignored it, so it was never saved
             $paymentMethod = $data['payment_method'] ?? null;
             $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
 
@@ -243,10 +187,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * DELETE /api/billing/invoices/{id}
-     * Soft delete an invoice. Role: Admin only.
-     */
     public function destroy(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -267,11 +207,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * GET /api/billing/summary
-     * Pending/paid/overdue totals for the tenant.
-     * Roles: Admin, Provider.
-     */
     public function summary(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();

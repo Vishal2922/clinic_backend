@@ -49,44 +49,28 @@ class CryptoService
      * Decrypt data using AES-256-CBC
      */
     public function decrypt(string $encryptedData): string
-{
-    // 1. Handle empty strings immediately to avoid unnecessary processing
-    if ($encryptedData === '') {
-        return $encryptedData;
-    }
+    {
+        $combined = base64_decode($encryptedData);
 
-    // 2. Use strict base64 decoding. If it fails, it's plaintext.
-    $combined = base64_decode($encryptedData, true);
+        if ($combined === false) {
+            throw new \RuntimeException('Invalid encrypted data format');
+        }
 
-    if ($combined === false) {
-        // Return original instead of throwing an exception
-        return $encryptedData;
-    }
+        $ivLength  = openssl_cipher_iv_length($this->cipher);
+        $iv        = substr($combined, 0, $ivLength);
+        $encrypted = substr($combined, $ivLength);
 
-    $ivLength  = openssl_cipher_iv_length($this->cipher);
-    
-    // 3. Ensure the string is actually long enough to contain an IV + data
-    if (strlen($combined) <= $ivLength) {
-        // Return original instead of throwing an exception
-        return $encryptedData;
-    }
+        $decrypted = openssl_decrypt(
+            $encrypted,
+            $this->cipher,
+            $this->key,
+            OPENSSL_RAW_DATA,
+            $iv
+        );
 
-    $iv        = substr($combined, 0, $ivLength);
-    $encrypted = substr($combined, $ivLength);
-
-    // 4. Use the @ operator to suppress PHP warnings if the IV is mangled
-    $decrypted = @openssl_decrypt(
-        $encrypted,
-        $this->cipher,
-        $this->key,
-        OPENSSL_RAW_DATA,
-        $iv
-    );
-
-    // 5. Fallback to plaintext if decryption fails, rather than crashing the API
-    if ($decrypted === false) {
-        return $encryptedData;
-    }
+        if ($decrypted === false) {
+            throw new \RuntimeException('Decryption failed');
+        }
 
     return $decrypted;
 }

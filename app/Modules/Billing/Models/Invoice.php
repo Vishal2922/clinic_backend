@@ -1,23 +1,25 @@
 <?php
 namespace App\Modules\Billing\Models;
 
-use App\Core\Database;
 use App\Core\Security\CryptoService;
 
 class Invoice
 {
-    private Database $db;
     private CryptoService $crypto;
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
         $this->crypto = new CryptoService();
+    }
+
+    private function db(): \App\Core\TenantDatabase
+    {
+        return tenant_db();
     }
 
     public function findById(int $id, int $tenantId): ?array
     {
-        $invoice = $this->db->fetch(
+        $invoice = $this->db()->fetch(
             'SELECT i.*, p.encrypted_name AS enc_patient_name, u.username AS provider_name
              FROM invoices i
              LEFT JOIN patients p ON i.patient_id = p.id
@@ -48,13 +50,13 @@ class Invoice
             $params['status'] = $status;
         }
 
-        $countResult = $this->db->fetch(
+        $countResult = $this->db()->fetch(
             "SELECT COUNT(*) as total FROM invoices i WHERE $where",
             $params
         );
         $total = (int) ($countResult['total'] ?? 0);
 
-        $invoices = $this->db->fetchAll(
+        $invoices = $this->db()->fetchAll(
             "SELECT i.*, p.encrypted_name AS enc_patient_name, u.username AS provider_name
              FROM invoices i
              LEFT JOIN patients p ON i.patient_id = p.id
@@ -80,7 +82,7 @@ class Invoice
 
     public function create(array $data): int
     {
-        return $this->db->insert(
+        return $this->db()->insert(
             'INSERT INTO invoices
              (tenant_id, patient_id, provider_id, appointment_id, invoice_number,
               amount, tax, total_amount, status, due_date, encrypted_notes, created_at, updated_at)
@@ -105,9 +107,7 @@ class Invoice
 
     public function updateStatus(int $id, int $tenantId, string $status, ?string $paidAt = null, ?string $paymentMethod = null): bool
     {
-        // BUG FIX: Original only updated status + paid_at but never payment_method.
-        // Body contains payment_method but it was silently ignored, so it stayed NULL forever.
-        $affected = $this->db->execute(
+        $affected = $this->db()->execute(
             'UPDATE invoices
              SET status = :status, paid_at = :paid_at, payment_method = :payment_method, updated_at = NOW()
              WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
@@ -124,7 +124,7 @@ class Invoice
 
     public function softDelete(int $id, int $tenantId): bool
     {
-        $affected = $this->db->execute(
+        $affected = $this->db()->execute(
             'UPDATE invoices SET deleted_at = NOW() WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
             ['id' => $id, 'tid' => $tenantId]
         );
@@ -133,7 +133,7 @@ class Invoice
 
     public function getSummary(int $tenantId): array
     {
-        $result = $this->db->fetch(
+        $result = $this->db()->fetch(
             "SELECT
                 COUNT(*) AS total_invoices,
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
@@ -150,15 +150,12 @@ class Invoice
         return $result ?? [];
     }
 
-    /**
-     * FIX: Safe invoice number generation using fetch() instead of fetchColumn()
-     */
     public function generateInvoiceNumber(int $tenantId): string
     {
         $date = date('Ymd');
         $prefix = "INV-{$tenantId}-{$date}-";
 
-        $result = $this->db->fetch(
+        $result = $this->db()->fetch(
             "SELECT COUNT(*) AS seq FROM invoices
              WHERE tenant_id = :tid AND invoice_number LIKE :prefix",
             ['tid' => $tenantId, 'prefix' => $prefix . '%']
