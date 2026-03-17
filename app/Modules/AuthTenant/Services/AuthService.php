@@ -16,6 +16,13 @@ class AuthService
     private CryptoService $crypto;
     private Permission $permissionModel;
     private AuthModel $authModel;
+    
+    // Centralized Argon Options to ensure consistent hashing
+    private array $argonOptions = [
+        'memory_cost' => 65536,
+        'time_cost'   => 4,
+        'threads'     => 3,
+    ];
 
     public function __construct()
     {
@@ -61,15 +68,11 @@ class AuthService
         $encryptedFullName = isset($data['full_name']) ? $this->crypto->encrypt($data['full_name']) : null;
         $encryptedPhone    = isset($data['phone']) ? $this->crypto->encrypt($data['phone']) : null;
 
-        $passwordHash = password_hash($data['password'], PASSWORD_ARGON2ID, [
-            'memory_cost' => 65536,
-            'time_cost'   => 4,
-            'threads'     => 3,
-        ]);
+        $passwordHash = password_hash($data['password'], PASSWORD_ARGON2ID, $this->argonOptions);
 
         $userId = $this->authModel->createUser([
             'role_id'             => $roleId,
-            'username'            => sanitize($data['username']),
+            'username'            => trim($data['username']),
             'encrypted_email'     => $encryptedEmail,
             'email_hash'          => $emailHash,
             'password_hash'       => $passwordHash,
@@ -89,9 +92,12 @@ class AuthService
 
     public function login(string $username, string $password, int $tenantId): array
     {
+        app_log("[AuthService] Attempting login for '{$username}' in tenant '{$tenantId}'");
+        
         $user = $this->authModel->findForLogin($username);
 
         if (!$user) {
+            app_log("Login failed: User '{$username}' not found in tenant {$tenantId}", 'WARNING');
             throw new \RuntimeException('Invalid credentials');
         }
 
@@ -104,8 +110,10 @@ class AuthService
             throw new \RuntimeException('Invalid credentials');
         }
 
-        if (password_needs_rehash($user['password_hash'], PASSWORD_ARGON2ID)) {
-            $newHash = password_hash($password, PASSWORD_ARGON2ID);
+        // FIX: Added $this->argonOptions so it doesn't default to PHP's lower settings 
+        // and trigger a constant rehash loop.
+        if (password_needs_rehash($user['password_hash'], PASSWORD_ARGON2ID, $this->argonOptions)) {
+            $newHash = password_hash($password, PASSWORD_ARGON2ID, $this->argonOptions);
             $this->authModel->rehashPassword((int) $user['id'], $newHash);
         }
 
@@ -240,11 +248,7 @@ class AuthService
             throw new \RuntimeException('Current password is incorrect');
         }
 
-        $newHash = password_hash($newPassword, PASSWORD_ARGON2ID, [
-            'memory_cost' => 65536,
-            'time_cost'   => 4,
-            'threads'     => 3,
-        ]);
+        $newHash = password_hash($newPassword, PASSWORD_ARGON2ID, $this->argonOptions);
 
         $this->authModel->updatePassword($userId, $newHash);
 
