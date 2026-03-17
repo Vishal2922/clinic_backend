@@ -253,8 +253,8 @@ class TenantProvisioningService
     {
         $pdo->exec("USE `{$dbName}`");
 
-        // Use ARGON2ID to match the algorithm verified by AuthService::login()
-        $plainPassword  = $this->generateTemporaryPassword();
+        // Use the user-supplied password (from tenantData), or fall back to a default
+        $plainPassword  = $tenantData['admin_password'] ?? 'Admin@1234';
         $hashedPassword = password_hash($plainPassword, PASSWORD_ARGON2ID, [
             'memory_cost' => 65536,
             'time_cost'   => 4,
@@ -311,15 +311,7 @@ class TenantProvisioningService
         return $limits[$plan][$resource] ?? 10;
     }
 
-    private function generateTemporaryPassword(): string
-    {
-        $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$';
-        $pass  = '';
-        for ($i = 0; $i < 12; $i++) {
-            $pass .= $chars[random_int(0, strlen($chars) - 1)];
-        }
-        return $pass;
-    }
+
 
     private function getInlineSchema(): array
     {
