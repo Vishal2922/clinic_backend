@@ -9,9 +9,9 @@
  * 3. Strip subfolder base path so router sees /api/health not /clinic_backend/public/api/health
  */
 
-// 1. Error reporting — enable for debugging
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+// 1. Error reporting — log them, but don't display (prevents JSON corruption)
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
@@ -22,7 +22,9 @@ if (file_exists(dirname(__DIR__) . '/app/Helpers/functions.php')) {
 }
 
 // 2. Define base path
-define('BASE_PATH', dirname(__DIR__));
+if (!defined('BASE_PATH')) {
+    define('BASE_PATH', dirname(__DIR__));
+}
 
 // 3. FIX #3: Strip subfolder prefix from REQUEST_URI
 // Router expects /api/health but WAMP serves from /clinic_backend/public/api/health

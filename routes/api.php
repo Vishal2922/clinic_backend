@@ -192,7 +192,7 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 // rotate-tokens uses only $tenant middleware (no $auth) because the access token
 // may be expired — that is precisely WHY the client is calling this endpoint.
 // Authentication is instead verified via the refresh token cookie itself.
-  $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
+$router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
 
 
 $router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);

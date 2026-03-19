@@ -95,7 +95,9 @@ class AuthController extends Controller
     public function refresh(): void
     {
         $cookieName   = env('REFRESH_COOKIE_NAME', 'refresh_token');
+        //$cookieName   = $_COOKIE['refresh_token'] ?? null;
         $refreshToken = $this->request->getCookie($cookieName);
+        $tenantId     = $this->getTenantId();
 
         if (!$refreshToken) {
             Response::error('Refresh token not found in cookie.', 401);
@@ -103,7 +105,7 @@ class AuthController extends Controller
         }
 
         try {
-            $result = $this->authService->refreshAccessToken($refreshToken);
+            $result = $this->authService->refreshAccessToken($refreshToken, $tenantId);
             Response::json(['message' => 'Token refreshed successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
             Response::error($e->getMessage(), 401);
