@@ -4,9 +4,9 @@
  * Application Entry Point: Fixed Version.
  */
 
-// 1. Error reporting
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+// 1. Error reporting — log them, but don't display (prevents JSON corruption)
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
@@ -47,6 +47,13 @@ if (function_exists('app_log')) {
     app_log("[TOP] Incoming: " . $_SERVER['REQUEST_METHOD'] . " " . $_SERVER['REQUEST_URI']);
 }
 
+// 2. Define base path
+if (!defined('BASE_PATH')) {
+    define('BASE_PATH', dirname(__DIR__));
+}
+
+// 3. FIX #3: Strip subfolder prefix from REQUEST_URI
+// Router expects /api/health but WAMP serves from /clinic_backend/public/api/health
 // 5. Strip subfolder prefix from REQUEST_URI
 //    Router expects /api/health but WAMP serves /clinic_backend/public/api/health
 $basePath = '/clinic_backend/public';

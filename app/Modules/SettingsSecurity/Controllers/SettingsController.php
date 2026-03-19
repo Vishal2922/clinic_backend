@@ -154,6 +154,7 @@ class SettingsController extends Controller
     {
         $cookieName   = env('REFRESH_COOKIE_NAME', 'refresh_token');
         $refreshToken = $request->getCookie($cookieName);
+        $tenantId     = $this->getTenantId();
 
         if (!$refreshToken || !is_string($refreshToken)) {
             Response::error('Refresh token not found. Please log in again.', 401);
@@ -161,7 +162,7 @@ class SettingsController extends Controller
         }
 
         try {
-            $result = $this->settingsService->rotateTokens((string) $refreshToken);
+            $result = $this->settingsService->rotateTokens((string) $refreshToken, $tenantId);
             Response::json(['message' => 'Tokens rotated successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
             Response::error($e->getMessage(), 401);

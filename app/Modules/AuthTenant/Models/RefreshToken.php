@@ -45,7 +45,7 @@ class RefreshToken
     public function findByHash(string $tokenHash): ?array
     {
         return $this->db()->fetch(
-            'SELECT id, user_id, tenant_id, family, revoked 
+            'SELECT id, user_id, family, revoked 
              FROM refresh_tokens 
              WHERE token_hash = :token_hash AND revoked = 0',
             ['token_hash' => $tokenHash]

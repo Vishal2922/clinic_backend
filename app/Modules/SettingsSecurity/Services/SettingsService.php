@@ -102,15 +102,16 @@ class SettingsService
         app_log("User logged out from all devices (ID: {$userId})");
     }
 
-    public function rotateTokens(string $rawRefreshToken): array
+    public function rotateTokens(string $rawRefreshToken, int $tenantId): array
     {
         $tokenRecord = $this->tokenService->validateRefreshToken($rawRefreshToken);
         if (!$tokenRecord) {
             throw new \RuntimeException('Invalid or expired refresh token. Please log in again.');
         }
 
-        $userId   = (int) $tokenRecord['user_id'];
-        $tenantId = (int) $tokenRecord['tenant_id'];
+        $userId = (int) $tokenRecord['user_id'];
+        // Use the tenant_id from ResolveTenant middleware (passed by the controller),
+        // NOT from the token record — the refresh_tokens table does not store tenant_id.
 
         $user = $this->db()->fetch(
             'SELECT u.*, r.name AS role_name
@@ -146,7 +147,7 @@ class SettingsService
 
         $this->logAudit($userId, $tenantId, 'TOKEN_ROTATED', 'user', $userId, []);
 
-        app_log("Tokens rotated for user ID: {$userId}");
+        app_log("Tokens rotated for user ID: {$userId} in tenant {$tenantId}");
 
         return [
             'access_token' => $accessToken,

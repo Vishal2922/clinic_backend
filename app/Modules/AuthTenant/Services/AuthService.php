@@ -163,7 +163,7 @@ class AuthService
         ];
     }
 
-    public function refreshAccessToken(string $rawRefreshToken): array
+    public function refreshAccessToken(string $rawRefreshToken, int $tenantId): array
     {
         $tokenRecord = $this->tokenService->validateRefreshToken($rawRefreshToken);
 
@@ -171,8 +171,9 @@ class AuthService
             throw new \RuntimeException('Invalid or expired refresh token');
         }
 
-        $userId   = (int) $tokenRecord['user_id'];
-        $tenantId = (int) $tokenRecord['tenant_id'];
+        $userId = (int) $tokenRecord['user_id'];
+        // Use the tenant_id from ResolveTenant middleware (passed by the controller),
+        // NOT from the token record — the refresh_tokens table does not store tenant_id.
 
         $user = $this->authModel->findById($userId);
 
@@ -205,7 +206,7 @@ class AuthService
 
         $this->tokenService->setRefreshTokenCookie($rotationResult['refresh_token']);
 
-        app_log("Token refreshed for user: {$user['username']} (ID: {$userId})");
+        app_log("Token refreshed for user: {$user['username']} (ID: {$userId}) in tenant {$tenantId}");
 
         return [
             'access_token' => $accessToken,

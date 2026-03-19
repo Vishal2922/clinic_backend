@@ -17,10 +17,14 @@ class TokenService
         $this->refreshTtl  = (int) env('JWT_REFRESH_TTL', 604800);
         $this->cookieConfig = [
             'name'     => env('REFRESH_COOKIE_NAME', 'refresh_token'),
-            'httponly'  => true,
+            'httponly' => true,
             'secure'   => (bool) env('REFRESH_COOKIE_SECURE', false),
-            'samesite' => env('REFRESH_COOKIE_SAMESITE', 'Strict'),
-            'path'     => '/',
+            'samesite' => env('REFRESH_COOKIE_SAMESITE', 'Lax'),
+            'path'     => env('REFRESH_COOKIE_PATH', '/'),
+            // Leading-dot domain allows the cookie to be sent by ALL subdomains.
+            // e.g. REFRESH_COOKIE_DOMAIN=.localhost → apollo.localhost sends it too.
+            // Empty string = PHP default (current host only) — no domain attribute set.
+            'domain'   => env('REFRESH_COOKIE_DOMAIN', ''),
         ];
     }
 
@@ -122,30 +126,40 @@ class TokenService
 
     public function setRefreshTokenCookie(string $rawToken): void
     {
-        setcookie(
-            $this->cookieConfig['name'],
-            $rawToken,
-            [
-                'expires'  => time() + $this->refreshTtl,
-                'path'     => $this->cookieConfig['path'],
-                'httponly'  => $this->cookieConfig['httponly'],
-                'secure'   => $this->cookieConfig['secure'],
-                'samesite' => $this->cookieConfig['samesite'],
-            ]
-        );
+        $options = [
+            'expires'  => time() + $this->refreshTtl,
+            'path'     => $this->cookieConfig['path'],
+            'httponly' => $this->cookieConfig['httponly'],
+            'secure'   => $this->cookieConfig['secure'],
+            'samesite' => $this->cookieConfig['samesite'],
+        ];
+
+        // Only set domain attribute when explicitly configured.
+        // Empty string means PHP omits the domain attribute — browser scopes
+        // the cookie to the exact host that set it.
+        if (!empty($this->cookieConfig['domain'])) {
+            $options['domain'] = $this->cookieConfig['domain'];
+        }
+
+        setcookie($this->cookieConfig['name'], $rawToken, $options);
     }
 
     public function clearRefreshTokenCookie(): void
     {
-        setcookie(
-            $this->cookieConfig['name'],
-            '',
-            [
-                'expires'  => time() - 3600,
-                'path'     => $this->cookieConfig['path'],
-                'httponly'  => true,
-                'samesite' => 'Strict',
-            ]
-        );
+        $options = [
+            'expires'  => time() - 3600,
+            'path'     => $this->cookieConfig['path'],
+            'httponly' => $this->cookieConfig['httponly'],
+            'secure'   => $this->cookieConfig['secure'],
+            'samesite' => $this->cookieConfig['samesite'],
+        ];
+
+        // Must match the domain used when setting — otherwise the browser
+        // won't find the cookie to delete it.
+        if (!empty($this->cookieConfig['domain'])) {
+            $options['domain'] = $this->cookieConfig['domain'];
+        }
+
+        setcookie($this->cookieConfig['name'], '', $options);
     }
 }
