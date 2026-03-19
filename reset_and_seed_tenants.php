@@ -9,7 +9,7 @@
 // EDIT THESE 4 LINES TO MATCH YOUR MYSQL
 // ==============================================================
 $DB_HOST = 'localhost';   // if fails, try: 127.0.0.1
-$DB_PORT = '3306';        // WAMP: check tray icon -> MySQL -> port
+$DB_PORT = '3308';        // WAMP: check tray icon -> MySQL -> port
 $DB_USER = 'root';
 $DB_PASS = '';            // blank by default on WAMP/XAMPP
 // ==============================================================
