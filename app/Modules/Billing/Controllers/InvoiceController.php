@@ -21,9 +21,9 @@ class InvoiceController extends Controller
 
     public function index(Request $request, $id = null): void
     {
-        $tenantId = $this->getTenantId();
-        $user     = $this->getAuthUser();
-        $userRole = $user['role_name'] ?? '';
+        $tenantId  = $this->getTenantId();
+        $user      = $this->getAuthUser();
+        $userRole  = $user['role_name'] ?? '';
 
         $patientId = $request->getQueryParam('patient_id');
         $status    = $request->getQueryParam('status');
@@ -63,6 +63,13 @@ class InvoiceController extends Controller
         $tenantId = $this->getTenantId();
         $user     = $this->getAuthUser();
         $data     = $request->getBody();
+
+        // FIX: frontend sends `amount` (subtotal from line items).
+        // Accept `amount` directly, or fall back to `total_amount` if
+        // the client only sent the grand total.
+        if (!isset($data['amount']) && isset($data['total_amount'])) {
+            $data['amount'] = $data['total_amount'];
+        }
 
         $errors = $this->validate($data, [
             'patient_id'  => 'required|numeric',

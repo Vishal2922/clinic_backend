@@ -95,8 +95,9 @@ $router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $auth]], function ($router) use ($providerOnly, $staff, $csrf) {
 
-    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]);
-    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);
+    $router->get('/',     [PrescriptionController::class, 'index'],  [$staff]);           // GET list (Provider, Pharmacist, Admin)
+    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]); // CREATE (Provider only)
+    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);    // UPDATE (Provider, Pharmacist, Admin)
 });
 
 

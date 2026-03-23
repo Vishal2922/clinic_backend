@@ -8,36 +8,58 @@ use App\Core\Response;
 use App\Core\Security\CryptoService;
 use App\Modules\Prescriptions\Services\PrescriptionService;
 
-class PrescriptionController extends Controller 
+class PrescriptionController extends Controller
 {
     private PrescriptionService $service;
     private CryptoService $crypto;
 
-    public function __construct() 
+    public function __construct()
     {
-        // Services-ah initialize panroam
         $this->service = new PrescriptionService();
         $this->crypto  = new CryptoService();
     }
 
-    /**
-     * AUDIT LOG HELPER: Security compliance-kaaga ella sensitive actions-aiyum log pannum.
-     */
-    private function logActivity($userId, $tenantId, $action, $details): void 
+    private function logActivity($userId, $tenantId, $action, $details): void
     {
-        // Common helper function use panni audit trial maintain panroam
         if (function_exists('app_log')) {
             app_log("[AUDIT] user_id={$userId} tenant_id={$tenantId} action={$action} details={$details}");
         }
     }
 
     /**
-     * POST /api/prescriptions
-     * Role: Provider mattum thaan prescription create panna mudiyum.
+     * GET /api/prescriptions
+     * Role: Provider, Pharmacist, Admin  ($staff middleware)
+     * Optional: ?patient_id=123  to filter by patient
      */
-    public function store(Request $request): void 
+    public function index(Request $request): void
     {
-        // 1. AUTH & ROLE CHECK
+        $tenantId  = $this->getTenantId();
+        $patientId = $request->getQueryParam('patient_id')
+            ? (int) $request->getQueryParam('patient_id')
+            : null;
+
+        try {
+            $prescriptions = $this->service->listPrescriptions($tenantId, $patientId);
+
+            Response::json([
+                'status' => 'success',
+                'data'   => $prescriptions,
+                'total'  => count($prescriptions),
+            ], 200);
+        } catch (\Exception $e) {
+            Response::json([
+                'status'  => 'error',
+                'message' => 'Failed to fetch prescriptions: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/prescriptions
+     * Role: Provider only  ($providerOnly middleware)
+     */
+    public function store(Request $request): void
+    {
         $authUser = $this->getAuthUser();
         $tenantId = $this->getTenantId();
 
@@ -48,11 +70,10 @@ class PrescriptionController extends Controller
 
         $data = $request->getBody();
 
-        // 2. VALIDATION LOGIC
         $errors = $this->validate($data, [
             'patient_id'    => 'required|numeric',
             'medicine_name' => 'required|min:3',
-            'dosage'        => 'required'
+            'dosage'        => 'required',
         ]);
 
         if (!empty($errors)) {
@@ -60,25 +81,30 @@ class PrescriptionController extends Controller
             return;
         }
 
-        // 3. AES ENCRYPTION: Sensitive fields-ah database-ku poradhukku munnadi encrypt panroam
-        // CryptoService openSSL aes-256-cbc logic-ah handle pannum
+        // AES-256 encrypt sensitive fields before DB storage
         $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
         $data['dosage']        = $this->crypto->encrypt($data['dosage']);
 
-        // 4. INJECT METADATA
+        if (!empty($data['notes'])) {
+            $data['notes'] = $this->crypto->encrypt($data['notes']);
+        }
+
         $data['tenant_id']   = $tenantId;
         $data['provider_id'] = $authUser['id'] ?? $authUser['user_id'];
 
         try {
             $id = $this->service->createPrescription($data);
 
-            // Audit log create panroam
             $this->logActivity($data['provider_id'], $tenantId, 'CREATE_PRESCRIPTION', "Prescription ID {$id} created.");
 
+            // Fetch the full decrypted prescription so the frontend can display it immediately
+            $prescription = $this->service->getPrescriptionById($id, $tenantId);
+
             Response::json([
-                'status' => 'success', 
-                'id' => $id, 
-                'message' => 'Prescription encrypted and saved successfully'
+                'status'       => 'success',
+                'id'           => $id,
+                'prescription' => $prescription,
+                'message'      => 'Prescription created successfully',
             ], 201);
         } catch (\Exception $e) {
             Response::json(['status' => 'error', 'message' => 'Failed to create prescription: ' . $e->getMessage()], 500);
@@ -87,15 +113,14 @@ class PrescriptionController extends Controller
 
     /**
      * PUT /api/prescriptions/{id}
-     * Role: Provider or Pharmacist can update.
+     * Role: Provider, Pharmacist, Admin  ($staff middleware)
      */
-    public function update(Request $request, $id): void 
+    public function update(Request $request, $id): void
     {
         $authUser = $this->getAuthUser();
         $tenantId = $this->getTenantId();
-        
-        // 1. AUTH & ROLE CHECK
-        if (!$this->checkRole(['Provider', 'Pharmacist'])) {
+
+        if (!$this->checkRole(['Provider', 'Pharmacist', 'Admin'])) {
             Response::json(['status' => 'error', 'message' => 'Access Denied: Unauthorized role'], 403);
             return;
         }
@@ -107,20 +132,20 @@ class PrescriptionController extends Controller
 
         $data = $request->getBody();
 
-        // 2. ENCRYPT UPDATED FIELDS
-        // Update-la sensitive fields vandha adhai encrypt panni service-ku anupuvom
+        // Encrypt updated sensitive fields
         if (!empty($data['dosage'])) {
             $data['dosage'] = $this->crypto->encrypt($data['dosage']);
         }
         if (!empty($data['medicine_name'])) {
             $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
         }
+        if (!empty($data['notes'])) {
+            $data['notes'] = $this->crypto->encrypt($data['notes']);
+        }
 
         try {
-            // 3. SERVICE CALL
-            // Service level update logic with Role-based constraints
             $this->service->update(
-                $id,
+                (int) $id,
                 $tenantId,
                 $data,
                 $authUser['id'] ?? $authUser['user_id'],
