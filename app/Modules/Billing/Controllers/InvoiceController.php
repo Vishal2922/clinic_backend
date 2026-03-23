@@ -5,6 +5,7 @@ namespace App\Modules\Billing\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Modules\Billing\Models\Invoice;
 use App\Modules\Billing\Services\BillingService;
 
@@ -105,6 +106,19 @@ class InvoiceController extends Controller
             $result  = $this->billingService->generateInvoice($data, $tenantId, (int) $providerId);
             $invoice = $this->invoiceModel->findById($result['id'], $tenantId);
 
+            // Notify all Admins about the new invoice
+            $invoiceNum = $invoice['invoice_number'] ?? "INV-" . str_pad($result['id'], 4, '0', STR_PAD_LEFT);
+            $amount = number_format((float) ($invoice['total_amount'] ?? $data['amount']), 2);
+            NotificationHelper::notifyRole(
+                $tenantId,
+                'Admin',
+                'billing',
+                '🧾 New Invoice Generated',
+                "Invoice {$invoiceNum} created for ₹{$amount}",
+                'invoice',
+                (int) $result['id']
+            );
+
             Response::json([
                 'message' => 'Invoice generated successfully.',
                 'data'    => $invoice,
@@ -182,6 +196,21 @@ class InvoiceController extends Controller
             $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
 
             $updated = $this->invoiceModel->findById((int) $id, $tenantId);
+
+            // Notify Admins when invoice is paid
+            if ($data['status'] === 'paid') {
+                $invoiceNum = $updated['invoice_number'] ?? "INV-" . str_pad($id, 4, '0', STR_PAD_LEFT);
+                $amount = number_format((float) ($updated['total_amount'] ?? 0), 2);
+                NotificationHelper::notifyRole(
+                    $tenantId,
+                    'Admin',
+                    'billing',
+                    '💰 Invoice Payment Received',
+                    "Invoice {$invoiceNum} has been paid — ₹{$amount}",
+                    'invoice',
+                    (int) $id
+                );
+            }
 
             Response::json([
                 'message' => "Invoice status updated to '{$data['status']}'.",

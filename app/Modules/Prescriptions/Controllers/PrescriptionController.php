@@ -5,6 +5,7 @@ namespace App\Modules\Prescriptions\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Core\Security\CryptoService;
 use App\Modules\Prescriptions\Services\PrescriptionService;
 
@@ -100,6 +101,17 @@ class PrescriptionController extends Controller
             // Fetch the full decrypted prescription so the frontend can display it immediately
             $prescription = $this->service->getPrescriptionById($id, $tenantId);
 
+            // Notify all Pharmacists about the new prescription
+            NotificationHelper::notifyRole(
+                $tenantId,
+                'Pharmacist',
+                'prescription',
+                '💊 New Prescription Awaiting Dispense',
+                "Prescription #{$id} for Patient #{$data['patient_id']} — please review and dispense",
+                'prescription',
+                $id
+            );
+
             Response::json([
                 'status'       => 'success',
                 'id'           => $id,
@@ -153,6 +165,22 @@ class PrescriptionController extends Controller
             );
 
             $this->logActivity($authUser['id'] ?? $authUser['user_id'], $tenantId, 'UPDATE_PRESCRIPTION', "Prescription ID {$id} updated.");
+
+            // If status changed to dispensed, notify the original provider
+            if (isset($data['status']) && $data['status'] === 'dispensed') {
+                $rx = $this->service->getPrescriptionById((int) $id, $tenantId);
+                if ($rx && !empty($rx['provider_id'])) {
+                    NotificationHelper::notifyUser(
+                        $tenantId,
+                        (int) $rx['provider_id'],
+                        'prescription',
+                        '✅ Prescription Dispensed',
+                        "Prescription #{$id} has been dispensed by pharmacist",
+                        'prescription',
+                        (int) $id
+                    );
+                }
+            }
 
             Response::json(['status' => 'success', 'message' => 'Prescription updated successfully']);
         } catch (\Exception $e) {
