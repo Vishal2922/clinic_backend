@@ -1,93 +1,101 @@
 <?php
 
-namespace App\Core\Middleware;
+namespace App\Core\Security;
 
-use App\Core\Request;
-use App\Core\Response;
-
-
-class CsrfGuard
+class CryptoService
 {
-    public function handle(Request $request, Response $response, array $params = []): void
+    private string $key;
+    private string $cipher;
+
+    public function __construct()
     {
-        $method = $request->getMethod();
-        if (in_array($method, ['GET'])) {
-            return;
-        }
+        $this->key    = env('ENCRYPTION_KEY', 'change-this-key-in-env-file-32ch');
+        $this->cipher = 'aes-256-cbc';
 
-        // OPTIONS never need CSRF (pre-flight — no credentials)
-        if ($method === 'OPTIONS') {
-            return;
-        }
-
-        $this->validateToken($request);
-    }
-
-    private function validateToken(Request $request): void
-    {
-        $headerToken = $request->getHeader('x-csrf-token');
-
-        if (!$headerToken) {
-            Response::error(
-                'CSRF token missing. Send X-CSRF-TOKEN header. ' .
-                'Obtain token from GET /api/auth/csrf-token first.',
-                403
+        // Validate key length (AES-256 requires 32 bytes)
+        if (strlen($this->key) !== 32) {
+            throw new \RuntimeException(
+                'ENCRYPTION_KEY must be exactly 32 characters for AES-256-CBC. Current length: ' . strlen($this->key)
             );
-            return;
-        }
-
-        if (!isset($_SESSION['csrf_token']) || !isset($_SESSION['csrf_token_expires'])) {
-            Response::error(
-                'CSRF session not initialised. Call GET /api/auth/csrf-token first.',
-                403
-            );
-            return;
-        }
-
-        if ($_SESSION['csrf_token_expires'] < time()) {
-            unset($_SESSION['csrf_token'], $_SESSION['csrf_token_expires']);
-            Response::error(
-                'CSRF token expired. Call GET /api/auth/csrf-token to obtain a new one.',
-                403
-            );
-            return;
-        }
-
-        if (!hash_equals($_SESSION['csrf_token'], $headerToken)) {
-            Response::error('CSRF token invalid.', 403);
-            return;
         }
     }
 
-    public static function generate(): string
+    /**
+     * Encrypt data using AES-256-CBC
+     */
+    public function encrypt(string $plainText): string
     {
-        $ttl   = (int) env('CSRF_TTL', 3600);
-        $token = bin2hex(random_bytes(32));
+        $ivLength = openssl_cipher_iv_length($this->cipher);
+        $iv = openssl_random_pseudo_bytes($ivLength);
 
-        $_SESSION['csrf_token']         = $token;
-        $_SESSION['csrf_token_expires'] = time() + $ttl;
+        $encrypted = openssl_encrypt(
+            $plainText,
+            $this->cipher,
+            $this->key,
+            OPENSSL_RAW_DATA,
+            $iv
+        );
 
-        return $token;
-    }
-
-    public static function regenerate(): string
-    {
-        return self::generate();
-    }
-
-   
-    public static function getToken(): ?string
-    {
-        if (isset($_SESSION['csrf_token_expires']) && $_SESSION['csrf_token_expires'] < time()) {
-            unset($_SESSION['csrf_token'], $_SESSION['csrf_token_expires']);
-            return null;
+        if ($encrypted === false) {
+            throw new \RuntimeException('Encryption failed');
         }
 
-        return $_SESSION['csrf_token'] ?? null;
+        // Combine IV + encrypted data and base64 encode
+        $combined = $iv . $encrypted;
+        return base64_encode($combined);
     }
 
-    public static function destroy(): void
+    /**
+     * Decrypt data using AES-256-CBC
+     */
+    public function decrypt(string $encryptedData): string
     {
-        unset($_SESSION['csrf_token'], $_SESSION['csrf_token_expires']);
+        // 1. Handle empty strings immediately to avoid unnecessary processing
+        if ($encryptedData === '') {
+            return $encryptedData;
+        }
+
+        // 2. Use strict base64 decoding. If it fails, it's plaintext.
+        $combined = base64_decode($encryptedData, true);
+
+        if ($combined === false) {
+            // Return original instead of throwing an exception
+            return $encryptedData;
+        }
+
+        $ivLength  = openssl_cipher_iv_length($this->cipher);
+
+        // 3. Ensure the string is actually long enough to contain an IV + data
+        if (strlen($combined) <= $ivLength) {
+            // Return original instead of throwing an exception
+            return $encryptedData;
+        }
+
+        $iv        = substr($combined, 0, $ivLength);
+        $encrypted = substr($combined, $ivLength);
+
+        // 4. Use the @ operator to suppress PHP warnings if the IV is mangled
+        $decrypted = @openssl_decrypt(
+            $encrypted,
+            $this->cipher,
+            $this->key,
+            OPENSSL_RAW_DATA,
+            $iv
+        );
+
+        // 5. Fallback to plaintext if decryption fails, rather than crashing the API
+        if ($decrypted === false) {
+            return $encryptedData;
+        }
+
+        return $decrypted;
+    }
+
+    /**
+     * Create a deterministic hash for lookups (e.g., email lookup without decrypting)
+     */
+    public function hash(string $data): string
+    {
+        return hash('sha256', strtolower(trim($data)));
     }
 }
