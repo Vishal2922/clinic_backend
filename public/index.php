@@ -11,19 +11,16 @@ ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
 // ─────────────────────────────────────────────────────────────
-// 2. FIX: Send CORS headers on EVERY request, as early as possible.
-//    This must happen before ANY logic that could fail/exit,
-//    otherwise the browser never sees the headers and blocks the response.
+// 2. FIX: CORS is handled by Response::setCorsHeaders() down the line.
+//    Only handle the OPTIONS preflight here to prevent duplicate header errors.
 // ─────────────────────────────────────────────────────────────
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header("Access-Control-Allow-Origin: $origin");
-header("Access-Control-Allow-Credentials: true");
-header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Tenant-ID");
-header("Access-Control-Max-Age: 86400");
-
-// Handle OPTIONS preflight immediately after sending headers
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+    header("Access-Control-Allow-Origin: $origin");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Tenant-ID");
+    header("Access-Control-Max-Age: 86400");
     http_response_code(200);
     exit;
 }

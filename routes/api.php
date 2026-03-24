@@ -14,6 +14,7 @@ use App\Modules\Patients\Controllers\PatientController;
 use App\Modules\Appointments\Controllers\AppointmentController;
 use App\Modules\Calendar\Controllers\CalendarController;
 use App\Modules\Communication\Controllers\NoteController;
+use App\Modules\Notifications\Controllers\NotificationController;
 use App\Modules\Billing\Controllers\InvoiceController;
 use App\Modules\Staff\Controllers\StaffController;
 use App\Modules\SettingsSecurity\Controllers\SettingsController;
@@ -95,17 +96,18 @@ $router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $auth]], function ($router) use ($providerOnly, $staff, $csrf) {
 
-    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]);
-    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);
+    $router->get('/',     [PrescriptionController::class, 'index'],  [$staff]);           // GET list (Provider, Pharmacist, Admin)
+    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]); // CREATE (Provider only)
+    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);    // UPDATE (Provider, Pharmacist, Admin)
 });
 
 
 // ═══════════════════════════════════════════════════════════
 // MODULE 6: DASHBOARD STATISTICS
 // ═══════════════════════════════════════════════════════════
-$router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
+$router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated) {
 
-    $router->get('/stats', [DashboardController::class, 'index'], [$staff]);
+    $router->get('/stats', [DashboardController::class, 'index'], [$allAuthenticated]);
 });
 
 
@@ -125,6 +127,28 @@ $router->group(['prefix' => '/api/communication', 'middleware' => [$tenant, $aut
 
     // Soft-delete a note (author only)
     $router->delete('/notes/{id}',                   [NoteController::class, 'destroy'], [$csrf]);
+});
+
+
+// ═══════════════════════════════════════════════════════════
+// MODULE 13: NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════
+$router->group(['prefix' => '/api/notifications', 'middleware' => [$tenant, $auth, $allAuthenticated]], function ($router) use ($csrf) {
+
+    // List notifications (paginated) + unread count
+    $router->get('/',              [NotificationController::class, 'index']);
+
+    // Get unread count only (for badge polling)
+    $router->get('/unread-count',  [NotificationController::class, 'unreadCount']);
+
+    // Mark all as read
+    $router->post('/mark-all-read', [NotificationController::class, 'markAllAsRead'], [$csrf]);
+
+    // Mark single as read
+    $router->patch('/{id}/read',   [NotificationController::class, 'markAsRead'],    [$csrf]);
+
+    // Delete single notification
+    $router->delete('/{id}',       [NotificationController::class, 'destroy'],       [$csrf]);
 });
 
 
@@ -195,7 +219,8 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
 
 
-$router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);
+$router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users',       [UserController::class, 'index'],     [$tenant, $auth, $clinicStaff]);
 
 // ═══════════════════════════════════════════════════════════
 // SUPER ADMIN MODULE — Platform Control Plane

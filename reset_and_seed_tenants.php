@@ -1,20 +1,28 @@
 <?php
 /**
- * reset_and_seed_tenants.php - FULLY STANDALONE VERSION
- * No app classes needed. Pure PHP + PDO only.
- * Run from terminal: php reset_and_seed_tenants.php
+ * reset_and_seed_tenants.php — CENTRALIZED SEED SCRIPT
+ * =====================================================
+ * Single script to reset + re-provision all dev tenants.
+ * Schema  → database/tenant_template/schema.sql
+ * Seeds   → database/tenant_template/seeds.sql
+ *
+ * Run from terminal:  php reset_and_seed_tenants.php
  */
 
 // ==============================================================
 // EDIT THESE 4 LINES TO MATCH YOUR MYSQL
 // ==============================================================
-$DB_HOST = 'localhost';   // if fails, try: 127.0.0.1
-$DB_PORT = '3308';        // WAMP: check tray icon -> MySQL -> port
+$DB_HOST = 'localhost';
+$DB_PORT = '3308';
 $DB_USER = 'root';
-$DB_PASS = '';            // blank by default on WAMP/XAMPP
+$DB_PASS = '';
 // ==============================================================
 
 $ENCRYPTION_KEY = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'; // must match .env ENCRYPTION_KEY
+
+// ── Paths to centralized SQL files ───────────────────────────
+$SCHEMA_FILE = __DIR__ . '/database/tenant_template/schema.sql';
+$SEEDS_FILE  = __DIR__ . '/database/tenant_template/seeds.sql';
 
 // ── Inline encrypt / hash (replaces CryptoService) ───────────
 function aes_encrypt(string $plainText, string $key): string {
@@ -28,193 +36,36 @@ function sha_hash(string $data): string {
     return hash('sha256', strtolower(trim($data)));
 }
 
-// ── Tenant schema tables ──────────────────────────────────────
-function getTenantSchema(): array {
-    return [
-        "CREATE TABLE IF NOT EXISTS roles (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(50) NOT NULL UNIQUE,
-            description VARCHAR(255),
-            is_system_role TINYINT(1) DEFAULT 0,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS permissions (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            permission_key VARCHAR(100) NOT NULL UNIQUE,
-            description VARCHAR(255),
-            created_at DATETIME NOT NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS role_permissions (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            role_id INT UNSIGNED NOT NULL,
-            permission_id INT UNSIGNED NOT NULL,
-            created_at DATETIME NOT NULL,
-            UNIQUE KEY uq_role_perm (role_id, permission_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS users (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            role_id INT UNSIGNED NOT NULL,
-            username VARCHAR(50) NOT NULL UNIQUE,
-            encrypted_email TEXT,
-            email_hash VARCHAR(64),
-            password_hash VARCHAR(255) NOT NULL,
-            encrypted_full_name TEXT,
-            encrypted_phone TEXT,
-            status VARCHAR(20) DEFAULT 'active',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS refresh_tokens (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user_id INT UNSIGNED NOT NULL,
-            token_hash VARCHAR(255) NOT NULL,
-            family VARCHAR(64),
-            expires_at DATETIME NOT NULL,
-            revoked TINYINT(1) DEFAULT 0,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS patients (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            tenant_id INT UNSIGNED,
-            encrypted_name TEXT,
-            name_hash VARCHAR(64),
-            encrypted_phone TEXT,
-            phone_hash VARCHAR(64),
-            encrypted_email TEXT,
-            email_hash VARCHAR(64),
-            encrypted_medical_history TEXT,
-            encrypted_date_of_birth TEXT,
-            encrypted_gender TEXT,
-            encrypted_blood_group TEXT,
-            encrypted_address TEXT,
-            encrypted_emergency_contact TEXT,
-            status VARCHAR(20) DEFAULT 'active',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS staff (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user_id INT UNSIGNED,
-            tenant_id INT UNSIGNED,
-            encrypted_department TEXT,
-            encrypted_specialization TEXT,
-            encrypted_license_number TEXT,
-            encrypted_notes TEXT,
-            hire_date DATE,
-            status VARCHAR(20) DEFAULT 'active',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS appointments (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            tenant_id INT UNSIGNED,
-            patient_id INT UNSIGNED NOT NULL,
-            doctor_id INT UNSIGNED NOT NULL,
-            appointment_time DATETIME NOT NULL,
-            encrypted_reason TEXT,
-            status VARCHAR(30) DEFAULT 'scheduled',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS appointment_notes (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            tenant_id INT UNSIGNED,
-            appointment_id INT UNSIGNED NOT NULL,
-            author_id INT UNSIGNED NOT NULL,
-            message_encrypted TEXT,
-            note_type VARCHAR(30) DEFAULT 'note',
-            visible_to_role VARCHAR(30) DEFAULT 'all',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS prescriptions (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            tenant_id INT UNSIGNED,
-            appointment_id INT UNSIGNED,
-            patient_id INT UNSIGNED NOT NULL,
-            provider_id INT UNSIGNED NOT NULL,
-            pharmacist_id INT UNSIGNED,
-            encrypted_medicine_name TEXT,
-            encrypted_dosage TEXT,
-            encrypted_notes TEXT,
-            duration_days INT DEFAULT 7,
-            status VARCHAR(20) DEFAULT 'pending',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS invoices (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            tenant_id INT UNSIGNED,
-            invoice_number VARCHAR(30) UNIQUE,
-            patient_id INT UNSIGNED NOT NULL,
-            provider_id INT UNSIGNED,
-            appointment_id INT UNSIGNED,
-            amount DECIMAL(10,2) DEFAULT 0,
-            subtotal DECIMAL(10,2) DEFAULT 0,
-            tax DECIMAL(10,2) DEFAULT 0,
-            discount DECIMAL(10,2) DEFAULT 0,
-            total DECIMAL(10,2) DEFAULT 0,
-            total_amount DECIMAL(10,2) DEFAULT 0,
-            paid_amount DECIMAL(10,2) DEFAULT 0,
-            status VARCHAR(30) DEFAULT 'draft',
-            payment_method VARCHAR(30),
-            paid_at DATETIME,
-            due_date DATE,
-            encrypted_notes TEXT,
-            created_by INT UNSIGNED,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            deleted_at DATETIME
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS audit_log (
-            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user_id INT UNSIGNED,
-            tenant_id INT UNSIGNED,
-            action VARCHAR(100) NOT NULL,
-            entity_type VARCHAR(100),
-            entity_id INT UNSIGNED,
-            old_values JSON,
-            new_values JSON,
-            ip_address VARCHAR(45),
-            user_agent TEXT,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-        "CREATE TABLE IF NOT EXISTS user_sessions (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user_id INT UNSIGNED NOT NULL,
-            tenant_id INT UNSIGNED,
-            session_id VARCHAR(255) NOT NULL UNIQUE,
-            ip_address VARCHAR(45),
-            user_agent TEXT,
-            is_active TINYINT(1) DEFAULT 1,
-            last_active DATETIME,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-    ];
+/**
+ * Parse a .sql file into individual statements, skipping comments
+ */
+function parseSqlFile(string $filePath): array {
+    if (!file_exists($filePath)) {
+        echo "  [ERROR] SQL file not found: {$filePath}\n";
+        exit(1);
+    }
+    $sql  = file_get_contents($filePath);
+    $stmts = array_filter(array_map('trim', explode(';', $sql)));
+    $result = [];
+    foreach ($stmts as $s) {
+        // Skip pure-comment blocks
+        $stripped = trim(preg_replace('/--.*$/m', '', $s));
+        if (!empty($stripped)) $result[] = $s;
+    }
+    return $result;
 }
 
 // ─────────────────────────────────────────────────────────────
 echo "\n============================================\n";
-echo "  TENANT RESET & SEED SCRIPT (STANDALONE)\n";
+echo "  TENANT RESET & SEED (CENTRALIZED)\n";
 echo "============================================\n\n";
+
+// Verify SQL files exist
+echo "--- Verifying SQL template files ---\n";
+if (!file_exists($SCHEMA_FILE)) { echo "  [FAIL] Missing: {$SCHEMA_FILE}\n"; exit(1); }
+if (!file_exists($SEEDS_FILE))  { echo "  [FAIL] Missing: {$SEEDS_FILE}\n";  exit(1); }
+echo "  [OK] schema.sql found\n";
+echo "  [OK] seeds.sql found\n\n";
 
 // STEP 0 - Test connection
 echo "--- Testing MySQL Connection ---\n";
@@ -248,7 +99,7 @@ try {
     exit(1);
 }
 
-// STEP 2 - Drop existing tenant DBs (skip if none)
+// STEP 2 - Drop existing tenant DBs
 echo "--- Clearing Existing Tenants ---\n";
 $existing = $pdo->query("SELECT tenant_code, db_name, db_username FROM tenants")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -273,6 +124,12 @@ $pdo->exec("TRUNCATE TABLE master_audit_logs");
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
 echo "  [OK] Master DB cleared.\n\n";
 
+// ── Parse centralized SQL files ──────────────────────────────
+$schemaStmts = parseSqlFile($SCHEMA_FILE);
+$seedStmts   = parseSqlFile($SEEDS_FILE);
+echo "  Schema: " . count($schemaStmts) . " statements\n";
+echo "  Seeds:  " . count($seedStmts)  . " statements\n\n";
+
 // STEP 3 - Provision 5 clinics
 echo "--- Provisioning Tenants ---\n";
 
@@ -287,13 +144,24 @@ $clinics = [
 $planDays  = ['basic' => 30, 'standard' => 90, 'professional' => 180, 'enterprise' => 365];
 $planUsers = ['basic' => 10, 'standard' => 25, 'professional' => 50,  'enterprise' => 200];
 
+/**
+ * Staff users to create per tenant (all roles, testable credentials)
+ * role_id: 1=Admin, 2=Provider, 3=Nurse, 4=Receptionist, 5=Pharmacist
+ */
+$staffTemplate = [
+    ['suffix' => 'admin',        'role_id' => 1, 'role' => 'Admin',        'email_tpl' => 'admin@%s.com',        'name_tpl' => 'Admin - %s'],
+    ['suffix' => 'doctor',       'role_id' => 2, 'role' => 'Provider',     'email_tpl' => 'doctor@%s.com',       'name_tpl' => 'Dr. %s'],
+    ['suffix' => 'nurse',        'role_id' => 3, 'role' => 'Nurse',        'email_tpl' => 'nurse@%s.com',        'name_tpl' => 'Nurse - %s'],
+    ['suffix' => 'reception',    'role_id' => 4, 'role' => 'Receptionist', 'email_tpl' => 'reception@%s.com',    'name_tpl' => 'Receptionist - %s'],
+    ['suffix' => 'pharmacist',   'role_id' => 5, 'role' => 'Pharmacist',   'email_tpl' => 'pharmacist@%s.com',   'name_tpl' => 'Pharmacist - %s'],
+];
+
 $provisioned = [];
 
 foreach ($clinics as $c) {
     $dbName   = "clinic_tenant_{$c['code']}_db";
     $dbUser   = "clinic_{$c['code']}";
     $dbPass   = bin2hex(random_bytes(16));
-    $username = $c['code'] . '_admin';
     $expires  = date('Y-m-d H:i:s', strtotime('+' . ($planDays[$c['plan']] ?? 30) . ' days'));
 
     echo "  Provisioning {$c['code']}...\n";
@@ -308,62 +176,42 @@ foreach ($clinics as $c) {
         $pdo->exec("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER ON {$dbName}.* TO '{$dbUser}'@'%'");
         $pdo->exec("FLUSH PRIVILEGES");
 
-        // Run schema
+        // Run centralized schema
         $pdo->exec("USE {$dbName}");
-        foreach (getTenantSchema() as $sql) {
+        foreach ($schemaStmts as $sql) {
             $pdo->exec($sql);
         }
 
-        // Seed roles
-        $roles = [
-            ['Admin',        'Full system access',    1],
-            ['Provider',     'Doctor / Physician',    1],
-            ['Nurse',        'Nursing staff access',  1],
-            ['Receptionist', 'Front desk staff',      1],
-            ['Pharmacist',   'Pharmacy access',       1],
-            ['Patient',      'Patient portal access', 1],
-        ];
-        foreach ($roles as [$rName, $rDesc, $rSys]) {
-            $pdo->exec("INSERT INTO roles (name, description, is_system_role, created_at) VALUES ('{$rName}', '{$rDesc}', {$rSys}, NOW())");
+        // Run centralized seeds (roles, permissions, role-permissions)
+        foreach ($seedStmts as $sql) {
+            $pdo->exec($sql);
         }
 
-        // Seed permissions
-        $perms = [
-            ['patients.view','View patients'],['patients.create','Create patients'],
-            ['patients.edit','Edit patients'],['patients.delete','Delete patients'],
-            ['appointments.view','View appointments'],['appointments.create','Book appointments'],
-            ['appointments.manage','Manage appointments'],['prescriptions.view','View prescriptions'],
-            ['prescriptions.create','Create prescriptions'],['prescriptions.dispense','Dispense prescriptions'],
-            ['billing.view','View billing'],['billing.create','Create invoices'],
-            ['billing.manage','Manage payments'],['staff.view','View staff'],
-            ['staff.manage','Manage staff'],['reports.view','View reports'],
-            ['settings.manage','System settings'],['audit.view','View audit logs'],
-        ];
-        foreach ($perms as [$pKey, $pDesc]) {
-            $pdo->exec("INSERT INTO permissions (permission_key, description, created_at) VALUES ('{$pKey}', '{$pDesc}', NOW())");
+        // Create all staff users
+        $createdUsers = [];
+        foreach ($staffTemplate as $staff) {
+            $username  = $c['code'] . '_' . $staff['suffix'];
+            $password  = $c['pass']; // same password for all users in dev
+            $email     = sprintf($staff['email_tpl'], $c['code']);
+            $fullName  = sprintf($staff['name_tpl'], $c['name']);
+
+            $hashedPass = password_hash($password, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 4, 'threads' => 3]);
+            $encEmail   = aes_encrypt($email, $ENCRYPTION_KEY);
+            $emailHash  = sha_hash($email);
+            $encName    = aes_encrypt($fullName, $ENCRYPTION_KEY);
+
+            $stmt = $pdo->prepare("INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, status, created_at, updated_at) VALUES (:role_id, :username, :enc_email, :email_hash, :password, :enc_name, 'active', NOW(), NOW())");
+            $stmt->execute([
+                'role_id'    => $staff['role_id'],
+                'username'   => $username,
+                'enc_email'  => $encEmail,
+                'email_hash' => $emailHash,
+                'password'   => $hashedPass,
+                'enc_name'   => $encName,
+            ]);
+
+            $createdUsers[] = ['username' => $username, 'role' => $staff['role']];
         }
-
-        // Admin gets all permissions
-        $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, created_at) SELECT 1, id, NOW() FROM permissions");
-
-        // Provider permissions
-        $provPerms = "'patients.view','patients.create','patients.edit','appointments.view','appointments.create','appointments.manage','prescriptions.view','prescriptions.create','billing.view','billing.create','reports.view'";
-        $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, created_at) SELECT 2, id, NOW() FROM permissions WHERE permission_key IN ({$provPerms})");
-
-        // Create admin user
-        $hashedPass     = password_hash($c['pass'], PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 4, 'threads' => 3]);
-        $encEmail       = aes_encrypt($c['email'], $ENCRYPTION_KEY);
-        $emailHash      = sha_hash($c['email']);
-        $encName        = aes_encrypt('Admin - ' . $c['name'], $ENCRYPTION_KEY);
-
-        $stmt = $pdo->prepare("INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, status, created_at, updated_at) VALUES (1, :username, :enc_email, :email_hash, :password, :enc_name, 'active', NOW(), NOW())");
-        $stmt->execute([
-            'username'   => $username,
-            'enc_email'  => $encEmail,
-            'email_hash' => $emailHash,
-            'password'   => $hashedPass,
-            'enc_name'   => $encName,
-        ]);
 
         // Register tenant in master DB
         $pdo->exec("USE clinic_master_db");
@@ -392,11 +240,11 @@ foreach ($clinics as $c) {
             'name'     => $c['name'],
             'dbName'   => $dbName,
             'tenantId' => $tenantId,
-            'username' => $username,
             'pass'     => $c['pass'],
+            'users'    => $createdUsers,
         ];
 
-        echo "  [OK] {$c['code']} -> DB: {$dbName}\n";
+        echo "  [OK] {$c['code']} -> DB: {$dbName} (" . count($createdUsers) . " users)\n";
 
     } catch (Exception $e) {
         echo "  [FAILED] {$c['code']}: " . $e->getMessage() . "\n";
@@ -421,6 +269,10 @@ foreach ($provisioned as $t) {
     echo "  Seeding {$t['code']}...\n";
     try {
         $pdo->exec("USE {$t['dbName']}");
+
+        // Doctor user_id = 2 (the Provider user created above)
+        $doctorId = 2;
+
         foreach ($patients as $i => $p) {
             $stmt = $pdo->prepare("INSERT INTO patients (tenant_id, encrypted_name, name_hash, encrypted_phone, phone_hash, encrypted_email, email_hash, encrypted_medical_history, status, created_at) VALUES (:tid, :enc_name, :hash_name, :enc_phone, :hash_phone, :enc_email, :hash_email, :enc_hist, 'active', NOW())");
             $stmt->execute([
@@ -435,14 +287,21 @@ foreach ($provisioned as $t) {
             ]);
             $pid = $pdo->lastInsertId();
 
-            $appt = $pdo->prepare("INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, encrypted_reason, status, created_at) VALUES (:tid, :pid, 1, DATE_ADD(NOW(), INTERVAL 1 DAY), :enc_reason, 'scheduled', NOW())");
+            // Appointment (assigned to doctor user)
+            $appt = $pdo->prepare("INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, encrypted_reason, status, created_at) VALUES (:tid, :pid, :did, DATE_ADD(NOW(), INTERVAL :day DAY), :enc_reason, 'scheduled', NOW())");
             $appt->execute([
                 'tid'        => $t['tenantId'],
                 'pid'        => $pid,
+                'did'        => $doctorId,
+                'day'        => $i + 1, // stagger: +1, +2, +3 days
                 'enc_reason' => aes_encrypt($reasons[$i], $ENCRYPTION_KEY),
             ]);
         }
-        echo "  [OK] 3 patients + 3 appointments seeded.\n";
+
+        // Seed a sample welcome notification for the admin user
+        $pdo->exec("INSERT INTO notifications (tenant_id, user_id, type, title, message, created_at) VALUES ({$t['tenantId']}, 1, 'system', 'Welcome to ClinicOS!', 'Your clinic has been provisioned successfully. Start by reviewing your dashboard.', NOW())");
+
+        echo "  [OK] 3 patients + 3 appointments + 1 notification seeded.\n";
     } catch (Exception $e) {
         echo "  [FAILED] {$t['code']}: " . $e->getMessage() . "\n";
     }
@@ -452,13 +311,15 @@ foreach ($provisioned as $t) {
 echo "\n============================================\n";
 echo "  ALL DONE!\n";
 echo "============================================\n\n";
-echo "Login Credentials:\n";
+echo "Login Credentials (same password for all roles per tenant):\n";
 echo "--------------------------------------------\n";
 foreach ($provisioned as $t) {
-    echo "  Tenant   : {$t['code']}\n";
-    echo "  Username : {$t['username']}\n";
-    echo "  Password : {$t['pass']}\n";
-    echo "  Database : {$t['dbName']}\n";
+    echo "  Tenant: {$t['code']}  |  Password: {$t['pass']}\n";
+    foreach ($t['users'] as $u) {
+        printf("    %-22s  (%s)\n", $u['username'], $u['role']);
+    }
     echo "--------------------------------------------\n";
 }
+echo "\nExample: Login to apollo as Provider  ->  apollo_doctor / Apollo@1234\n";
+echo "Example: Login to apollo as Nurse     ->  apollo_nurse  / Apollo@1234\n";
 echo "\nFrontend .env: REACT_APP_TENANT_CODE=apollo\n\n";

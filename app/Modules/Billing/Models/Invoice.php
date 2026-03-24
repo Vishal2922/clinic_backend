@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Modules\Billing\Models;
 
 use App\Core\Security\CryptoService;
@@ -135,16 +136,21 @@ class Invoice
     {
         $result = $this->db()->fetch(
             "SELECT
-                COUNT(*) AS total_invoices,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
-                SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdue_count,
-                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
-                COALESCE(SUM(total_amount), 0) AS total_billed,
-                COALESCE(SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END), 0) AS total_collected,
-                COALESCE(SUM(CASE WHEN status IN ('pending','overdue') THEN total_amount ELSE 0 END), 0) AS total_outstanding
-             FROM invoices
-             WHERE tenant_id = :tid AND deleted_at IS NULL",
+            COUNT(*) AS total_invoices,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)  AS pending,
+            SUM(CASE WHEN status = 'paid'    THEN 1 ELSE 0 END)  AS paid,
+            SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END)  AS overdue,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+            SUM(CASE WHEN status IN ('pending','overdue','unpaid') THEN 1 ELSE 0 END) AS unpaid,
+            COALESCE(SUM(total_amount), 0) AS total_billed,
+            COALESCE(SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END), 0) AS total_collected,
+            COALESCE(SUM(CASE WHEN status = 'paid'
+                AND MONTH(paid_at) = MONTH(CURDATE())
+                AND YEAR(paid_at)  = YEAR(CURDATE())
+                THEN total_amount ELSE 0 END), 0) AS revenue_this_month,
+            COALESCE(SUM(total_amount), 0) AS total_revenue
+         FROM invoices
+         WHERE tenant_id = :tid AND deleted_at IS NULL",
             ['tid' => $tenantId]
         );
         return $result ?? [];
