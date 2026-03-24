@@ -5,6 +5,7 @@ namespace App\Modules\Billing\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Modules\Billing\Models\Invoice;
 use App\Modules\Billing\Services\BillingService;
 
@@ -21,9 +22,9 @@ class InvoiceController extends Controller
 
     public function index(Request $request, $id = null): void
     {
-        $tenantId = $this->getTenantId();
-        $user     = $this->getAuthUser();
-        $userRole = $user['role_name'] ?? '';
+        $tenantId  = $this->getTenantId();
+        $user      = $this->getAuthUser();
+        $userRole  = $user['role_name'] ?? '';
 
         $patientId = $request->getQueryParam('patient_id');
         $status    = $request->getQueryParam('status');
@@ -64,6 +65,13 @@ class InvoiceController extends Controller
         $user     = $this->getAuthUser();
         $data     = $request->getBody();
 
+        // FIX: frontend sends `amount` (subtotal from line items).
+        // Accept `amount` directly, or fall back to `total_amount` if
+        // the client only sent the grand total.
+        if (!isset($data['amount']) && isset($data['total_amount'])) {
+            $data['amount'] = $data['total_amount'];
+        }
+
         $errors = $this->validate($data, [
             'patient_id'  => 'required|numeric',
             'amount'      => 'required|numeric',
@@ -97,6 +105,19 @@ class InvoiceController extends Controller
         try {
             $result  = $this->billingService->generateInvoice($data, $tenantId, (int) $providerId);
             $invoice = $this->invoiceModel->findById($result['id'], $tenantId);
+
+            // Notify all Admins about the new invoice
+            $invoiceNum = $invoice['invoice_number'] ?? "INV-" . str_pad($result['id'], 4, '0', STR_PAD_LEFT);
+            $amount = number_format((float) ($invoice['total_amount'] ?? $data['amount']), 2);
+            NotificationHelper::notifyRole(
+                $tenantId,
+                'Admin',
+                'billing',
+                '🧾 New Invoice Generated',
+                "Invoice {$invoiceNum} created for ₹{$amount}",
+                'invoice',
+                (int) $result['id']
+            );
 
             Response::json([
                 'message' => 'Invoice generated successfully.',
@@ -175,6 +196,21 @@ class InvoiceController extends Controller
             $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
 
             $updated = $this->invoiceModel->findById((int) $id, $tenantId);
+
+            // Notify Admins when invoice is paid
+            if ($data['status'] === 'paid') {
+                $invoiceNum = $updated['invoice_number'] ?? "INV-" . str_pad($id, 4, '0', STR_PAD_LEFT);
+                $amount = number_format((float) ($updated['total_amount'] ?? 0), 2);
+                NotificationHelper::notifyRole(
+                    $tenantId,
+                    'Admin',
+                    'billing',
+                    '💰 Invoice Payment Received',
+                    "Invoice {$invoiceNum} has been paid — ₹{$amount}",
+                    'invoice',
+                    (int) $id
+                );
+            }
 
             Response::json([
                 'message' => "Invoice status updated to '{$data['status']}'.",

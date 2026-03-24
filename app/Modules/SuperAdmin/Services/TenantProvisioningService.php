@@ -198,55 +198,28 @@ class TenantProvisioningService
     {
         $pdo->exec("USE `{$dbName}`");
         $schemaFile = BASE_PATH . '/database/tenant_template/schema.sql';
-        if (file_exists($schemaFile)) {
-            $statements = array_filter(array_map('trim', explode(';', file_get_contents($schemaFile))));
-            foreach ($statements as $stmt) {
-                if (!empty($stmt)) $pdo->exec($stmt);
-            }
-        } else {
-            foreach ($this->getInlineSchema() as $sql) {
-                $pdo->exec($sql);
-            }
+        if (!file_exists($schemaFile)) {
+            throw new RuntimeException("Centralized schema not found: {$schemaFile}");
+        }
+        $statements = array_filter(array_map('trim', explode(';', file_get_contents($schemaFile))));
+        foreach ($statements as $stmt) {
+            $stripped = trim(preg_replace('/--.*$/m', '', $stmt));
+            if (!empty($stripped)) $pdo->exec($stmt);
         }
     }
 
     private function seedTenantDefaults(PDO $pdo, string $dbName): void
     {
         $pdo->exec("USE `{$dbName}`");
-
-        $roles = [
-            ['Admin', 'Full system access', 1],
-            ['Provider', 'Doctor / Physician', 1],
-            ['Nurse', 'Nursing staff access', 1],
-            ['Receptionist', 'Front desk staff', 1],
-            ['Pharmacist', 'Pharmacy access', 1],
-            ['Patient', 'Patient portal access', 1],
-        ];
-        foreach ($roles as [$name, $desc, $sys]) {
-            $pdo->exec("INSERT INTO roles (name, description, is_system_role, created_at) VALUES ('{$name}', '{$desc}', {$sys}, NOW())");
+        $seedsFile = BASE_PATH . '/database/tenant_template/seeds.sql';
+        if (!file_exists($seedsFile)) {
+            throw new RuntimeException("Centralized seeds not found: {$seedsFile}");
         }
-
-        $permissions = [
-            ['patients.view','View patient records'], ['patients.create','Create new patients'],
-            ['patients.edit','Edit patient records'], ['patients.delete','Delete patients'],
-            ['appointments.view','View appointments'], ['appointments.create','Book appointments'],
-            ['appointments.manage','Manage appointment status'], ['prescriptions.view','View prescriptions'],
-            ['prescriptions.create','Create prescriptions'], ['prescriptions.dispense','Dispense prescriptions'],
-            ['billing.view','View billing'], ['billing.create','Create invoices'],
-            ['billing.manage','Manage payments'], ['staff.view','View staff'],
-            ['staff.manage','Manage staff'], ['reports.view','View reports'],
-            ['settings.manage','System settings'], ['audit.view','View audit logs'],
-        ];
-        foreach ($permissions as [$key, $desc]) {
-            $pdo->exec("INSERT INTO permissions (permission_key, description, created_at) VALUES ('{$key}', '{$desc}', NOW())");
+        $statements = array_filter(array_map('trim', explode(';', file_get_contents($seedsFile))));
+        foreach ($statements as $stmt) {
+            $stripped = trim(preg_replace('/--.*$/m', '', $stmt));
+            if (!empty($stripped)) $pdo->exec($stmt);
         }
-
-        // Admin gets all permissions
-        $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, created_at) SELECT 1, id, NOW() FROM permissions");
-
-        // Provider permissions
-        $providerPerms = "'patients.view','patients.create','patients.edit','appointments.view','appointments.create','appointments.manage','prescriptions.view','prescriptions.create','billing.view','billing.create','reports.view'";
-        $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, created_at) SELECT 2, id, NOW() FROM permissions WHERE permission_key IN ({$providerPerms})");
     }
 
     private function createInitialTenantAdmin(PDO $pdo, string $dbName, array $tenantData): array
@@ -309,202 +282,5 @@ class TenantProvisioningService
             'enterprise'   => ['users' => 999, 'patients' => 99999,'doctors' => 999],
         ];
         return $limits[$plan][$resource] ?? 10;
-    }
-
-
-
-    private function getInlineSchema(): array
-    {
-        // Full tenant schema — column names match all module models exactly
-        return [
-            // --- RBAC ---
-            "CREATE TABLE IF NOT EXISTS `roles` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `name` VARCHAR(50) NOT NULL UNIQUE,
-                `description` VARCHAR(255),
-                `is_system_role` TINYINT(1) DEFAULT 0,
-                `created_at` DATETIME NOT NULL,
-                `updated_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            "CREATE TABLE IF NOT EXISTS `permissions` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `permission_key` VARCHAR(100) NOT NULL UNIQUE,
-                `description` VARCHAR(255),
-                `created_at` DATETIME NOT NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            "CREATE TABLE IF NOT EXISTS `role_permissions` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `role_id` INT UNSIGNED NOT NULL,
-                `permission_id` INT UNSIGNED NOT NULL,
-                `created_at` DATETIME NOT NULL,
-                UNIQUE KEY `uq_role_perm` (`role_id`, `permission_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- USERS (encrypted, NO tenant_id — DB-level isolation) ---
-            "CREATE TABLE IF NOT EXISTS `users` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `role_id` INT UNSIGNED NOT NULL,
-                `username` VARCHAR(50) NOT NULL UNIQUE,
-                `encrypted_email` TEXT,
-                `email_hash` VARCHAR(64),
-                `password_hash` VARCHAR(255) NOT NULL,
-                `encrypted_full_name` TEXT,
-                `encrypted_phone` TEXT,
-                `status` VARCHAR(20) DEFAULT 'active',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- REFRESH TOKENS (with family for rotation) ---
-            "CREATE TABLE IF NOT EXISTS `refresh_tokens` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `user_id` INT UNSIGNED NOT NULL,
-                `token_hash` VARCHAR(255) NOT NULL,
-                `family` VARCHAR(64),
-                `expires_at` DATETIME NOT NULL,
-                `revoked` TINYINT(1) DEFAULT 0,
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- PATIENTS (encrypted, with tenant_id) ---
-            "CREATE TABLE IF NOT EXISTS `patients` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `tenant_id` INT UNSIGNED,
-                `encrypted_name` TEXT,
-                `name_hash` VARCHAR(64),
-                `encrypted_phone` TEXT,
-                `phone_hash` VARCHAR(64),
-                `encrypted_email` TEXT,
-                `email_hash` VARCHAR(64),
-                `encrypted_medical_history` TEXT,
-                `encrypted_date_of_birth` TEXT,
-                `encrypted_gender` TEXT,
-                `encrypted_blood_group` TEXT,
-                `encrypted_address` TEXT,
-                `encrypted_emergency_contact` TEXT,
-                `status` VARCHAR(20) DEFAULT 'active',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- STAFF (encrypted, with tenant_id) ---
-            "CREATE TABLE IF NOT EXISTS `staff` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `user_id` INT UNSIGNED,
-                `tenant_id` INT UNSIGNED,
-                `encrypted_department` TEXT,
-                `encrypted_specialization` TEXT,
-                `encrypted_license_number` TEXT,
-                `encrypted_notes` TEXT,
-                `hire_date` DATE,
-                `status` VARCHAR(20) DEFAULT 'active',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- APPOINTMENTS ---
-            "CREATE TABLE IF NOT EXISTS `appointments` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `tenant_id` INT UNSIGNED,
-                `patient_id` INT UNSIGNED NOT NULL,
-                `doctor_id` INT UNSIGNED NOT NULL,
-                `appointment_time` DATETIME NOT NULL,
-                `encrypted_reason` TEXT,
-                `status` VARCHAR(30) DEFAULT 'scheduled',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- APPOINTMENT NOTES ---
-            "CREATE TABLE IF NOT EXISTS `appointment_notes` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `tenant_id` INT UNSIGNED,
-                `appointment_id` INT UNSIGNED NOT NULL,
-                `author_id` INT UNSIGNED NOT NULL,
-                `message_encrypted` TEXT,
-                `note_type` VARCHAR(30) DEFAULT 'note',
-                `visible_to_role` VARCHAR(30) DEFAULT 'all',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- PRESCRIPTIONS ---
-            "CREATE TABLE IF NOT EXISTS `prescriptions` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `tenant_id` INT UNSIGNED,
-                `appointment_id` INT UNSIGNED,
-                `patient_id` INT UNSIGNED NOT NULL,
-                `provider_id` INT UNSIGNED NOT NULL,
-                `pharmacist_id` INT UNSIGNED,
-                `encrypted_medicine_name` TEXT,
-                `encrypted_dosage` TEXT,
-                `encrypted_notes` TEXT,
-                `duration_days` INT DEFAULT 7,
-                `status` VARCHAR(20) DEFAULT 'pending',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- INVOICES ---
-            "CREATE TABLE IF NOT EXISTS `invoices` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `tenant_id` INT UNSIGNED,
-                `invoice_number` VARCHAR(30) UNIQUE,
-                `patient_id` INT UNSIGNED NOT NULL,
-                `provider_id` INT UNSIGNED,
-                `appointment_id` INT UNSIGNED,
-                `amount` DECIMAL(10,2) DEFAULT 0,
-                `subtotal` DECIMAL(10,2) DEFAULT 0,
-                `tax` DECIMAL(10,2) DEFAULT 0,
-                `discount` DECIMAL(10,2) DEFAULT 0,
-                `total` DECIMAL(10,2) DEFAULT 0,
-                `total_amount` DECIMAL(10,2) DEFAULT 0,
-                `paid_amount` DECIMAL(10,2) DEFAULT 0,
-                `status` VARCHAR(30) DEFAULT 'draft',
-                `payment_method` VARCHAR(30),
-                `paid_at` DATETIME,
-                `due_date` DATE,
-                `encrypted_notes` TEXT,
-                `created_by` INT UNSIGNED,
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME,
-                `deleted_at` DATETIME
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- AUDIT LOG ---
-            "CREATE TABLE IF NOT EXISTS `audit_log` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `user_id` INT UNSIGNED,
-                `tenant_id` INT UNSIGNED,
-                `action` VARCHAR(100) NOT NULL,
-                `entity_type` VARCHAR(100),
-                `entity_id` INT UNSIGNED,
-                `old_values` JSON,
-                `new_values` JSON,
-                `ip_address` VARCHAR(45),
-                `user_agent` TEXT,
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-
-            // --- USER SESSIONS ---
-            "CREATE TABLE IF NOT EXISTS `user_sessions` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                `user_id` INT UNSIGNED NOT NULL,
-                `tenant_id` INT UNSIGNED,
-                `session_id` VARCHAR(255) NOT NULL UNIQUE,
-                `ip_address` VARCHAR(45),
-                `user_agent` TEXT,
-                `is_active` TINYINT(1) DEFAULT 1,
-                `last_active` DATETIME,
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-        ];
     }
 }

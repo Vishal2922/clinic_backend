@@ -5,6 +5,7 @@ namespace App\Modules\Appointments\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Modules\Appointments\Services\SchedulingService;
 use App\Modules\Appointments\Models\Appointment;
 
@@ -103,6 +104,20 @@ class AppointmentController extends Controller
             ]);
 
             $appointment = $this->appointmentModel->findById($id, $tenantId);
+
+            // Notify the assigned doctor
+            $patientName = $appointment['patient_name'] ?? "Patient #{$data['patient_id']}";
+            $timeStr = date('d M Y, h:i A', strtotime($data['appointment_time']));
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $data['doctor_id'],
+                'appointment',
+                '📅 New Appointment Scheduled',
+                "You have a new appointment with {$patientName} on {$timeStr}",
+                'appointment',
+                $id
+            );
+
             Response::json(['message' => 'Appointment booked successfully!', 'data' => $appointment], 201);
 
         } catch (\Exception $e) {
@@ -140,6 +155,17 @@ class AppointmentController extends Controller
             $this->appointmentModel->updateStatus((int) $id, $tenantId, $data['status']);
             $updated = $this->appointmentModel->findById((int) $id, $tenantId);
 
+            // Notify the doctor about status change
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $appointment['doctor_id'],
+                'appointment',
+                '📅 Appointment Status Updated',
+                "Appointment #{$id} status changed to {$data['status']}",
+                'appointment',
+                (int) $id
+            );
+
             Response::json([
                 'message' => "Appointment status updated to {$data['status']}",
                 'data'    => $updated,
@@ -165,6 +191,19 @@ class AppointmentController extends Controller
             }
 
             $this->appointmentModel->updateStatus((int) $id, $tenantId, 'cancelled');
+
+            // Notify the doctor about cancellation
+            $patientName = $appointment['patient_name'] ?? "Patient #{$appointment['patient_id']}";
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $appointment['doctor_id'],
+                'appointment',
+                '❌ Appointment Cancelled',
+                "Appointment with {$patientName} has been cancelled",
+                'appointment',
+                (int) $id
+            );
+
             Response::json(['message' => 'Appointment cancelled successfully.'], 200);
 
         } catch (\Exception $e) {

@@ -45,7 +45,7 @@ class Patient
         $patients = array_map([$this, 'decryptPatient'], $patients);
 
         return [
-            'patients' => $patients,
+            'patients'   => $patients,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,
@@ -73,8 +73,10 @@ class Patient
                 'enc_email'       => isset($data['email']) ? $this->crypto->encrypt($data['email']) : null,
                 'email_hash'      => isset($data['email']) ? $this->crypto->hash($data['email']) : null,
                 'enc_history'     => $this->crypto->encrypt($data['medical_history']),
-                'enc_dob'         => isset($data['dob']) ? $this->crypto->encrypt($data['dob']) : (isset($data['date_of_birth']) ? $this->crypto->encrypt($data['date_of_birth']) : null),
-                'enc_gender'      => isset($data['gender']) ? $this->crypto->encrypt($data['gender']) : null,
+                'enc_dob'         => isset($data['dob'])
+                    ? $this->crypto->encrypt($data['dob'])
+                    : (isset($data['date_of_birth']) ? $this->crypto->encrypt($data['date_of_birth']) : null),
+                'enc_gender'      => isset($data['gender'])      ? $this->crypto->encrypt($data['gender'])      : null,
                 'enc_blood_group' => isset($data['blood_group']) ? $this->crypto->encrypt($data['blood_group']) : null,
                 'status'          => $data['status'] ?? 'active',
             ]
@@ -83,7 +85,7 @@ class Patient
 
     public function update(int $id, array $data, int $tenantId): bool
     {
-        $sets = [];
+        $sets   = [];
         $params = ['id' => $id, 'tid' => $tenantId];
 
         if (isset($data['name'])) {
@@ -93,7 +95,7 @@ class Patient
             $params['name_hash'] = $this->crypto->hash($data['name']);
         }
         if (isset($data['phone'])) {
-            $phone = preg_replace('/\D/', '', $data['phone']);
+            $phone  = preg_replace('/\D/', '', $data['phone']);
             $sets[] = 'encrypted_phone = :enc_phone';
             $sets[] = 'phone_hash = :phone_hash';
             $params['enc_phone']  = $this->crypto->encrypt($phone);
@@ -111,8 +113,7 @@ class Patient
         }
         if (isset($data['dob']) || isset($data['date_of_birth'])) {
             $sets[] = 'encrypted_date_of_birth = :enc_dob';
-            $val = $data['dob'] ?? $data['date_of_birth'];
-            $params['enc_dob'] = $this->crypto->encrypt($val);
+            $params['enc_dob'] = $this->crypto->encrypt($data['dob'] ?? $data['date_of_birth']);
         }
         if (isset($data['blood_group'])) {
             $sets[] = 'encrypted_blood_group = :enc_blood_group';
@@ -127,13 +128,10 @@ class Patient
             $params['status'] = $data['status'];
         }
 
-        if (empty($sets)) {
-            return false;
-        }
+        if (empty($sets)) return false;
 
-        $sets[] = 'updated_at = NOW()';
-        $setStr = implode(', ', $sets);
-
+        $sets[]  = 'updated_at = NOW()';
+        $setStr  = implode(', ', $sets);
         $affected = $this->db()->execute(
             "UPDATE patients SET $setStr WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL",
             $params
@@ -161,17 +159,26 @@ class Patient
         return (int) ($result['count'] ?? 0) > 0;
     }
 
-    public function search(?string $query, int $tenantId, int $page = 1, int $perPage = 15): array
+    /**
+     * FIX: now accepts gender (post-decrypt filter) and status (SQL filter)
+     */
+    public function search(?string $query, ?string $gender, ?string $status, int $tenantId, int $page = 1, int $perPage = 10): array
     {
         $offset = ($page - 1) * $perPage;
         $params = ['tid' => $tenantId];
-        $where = 'tenant_id = :tid AND deleted_at IS NULL';
+        $where  = 'tenant_id = :tid AND deleted_at IS NULL';
 
         if ($query) {
-            $queryHash = $this->crypto->hash($query);
-            $where .= ' AND (name_hash = :q_hash OR phone_hash = :p_hash)';
+            $queryHash        = $this->crypto->hash($query);
+            $where           .= ' AND (name_hash = :q_hash OR phone_hash = :p_hash)';
             $params['q_hash'] = $queryHash;
             $params['p_hash'] = $queryHash;
+        }
+
+        // Status is a plain column — filter in SQL
+        if ($status && $status !== 'all') {
+            $where           .= ' AND status = :status';
+            $params['status'] = $status;
         }
 
         $countResult = $this->db()->fetch(
@@ -187,10 +194,17 @@ class Patient
 
         $patients = array_map([$this, 'decryptPatient'], $patients);
 
+        // Gender is AES-encrypted — must filter after decryption
+        if ($gender) {
+            $patients = array_values(
+                array_filter($patients, fn($p) => ($p['gender'] ?? '') === $gender)
+            );
+        }
+
         return [
-            'patients' => $patients,
+            'patients'   => $patients,
             'pagination' => [
-                'total'       => $total,
+                'total'       => $gender ? count($patients) : $total,
                 'page'        => $page,
                 'per_page'    => $perPage,
                 'total_pages' => $total > 0 ? (int) ceil($total / $perPage) : 0,
@@ -201,14 +215,14 @@ class Patient
     private function decryptPatient(array $patient): array
     {
         try {
-            if (!empty($patient['encrypted_name']))           $patient['name']             = $this->crypto->decrypt($patient['encrypted_name']);
-            if (!empty($patient['encrypted_phone']))          $patient['phone']            = $this->crypto->decrypt($patient['encrypted_phone']);
-            if (!empty($patient['encrypted_email']))          $patient['email']            = $this->crypto->decrypt($patient['encrypted_email']);
-            if (!empty($patient['encrypted_medical_history']))$patient['medical_history']  = $this->crypto->decrypt($patient['encrypted_medical_history']);
-            if (!empty($patient['encrypted_date_of_birth'])) $patient['date_of_birth']    = $this->crypto->decrypt($patient['encrypted_date_of_birth']);
-            if (!empty($patient['encrypted_gender']))         $patient['gender']           = $this->crypto->decrypt($patient['encrypted_gender']);
-            if (!empty($patient['encrypted_blood_group']))    $patient['blood_group']      = $this->crypto->decrypt($patient['encrypted_blood_group']);
-            if (!empty($patient['encrypted_address']))        $patient['address']          = $this->crypto->decrypt($patient['encrypted_address']);
+            if (!empty($patient['encrypted_name']))            $patient['name']              = $this->crypto->decrypt($patient['encrypted_name']);
+            if (!empty($patient['encrypted_phone']))           $patient['phone']             = $this->crypto->decrypt($patient['encrypted_phone']);
+            if (!empty($patient['encrypted_email']))           $patient['email']             = $this->crypto->decrypt($patient['encrypted_email']);
+            if (!empty($patient['encrypted_medical_history'])) $patient['medical_history']   = $this->crypto->decrypt($patient['encrypted_medical_history']);
+            if (!empty($patient['encrypted_date_of_birth']))   $patient['date_of_birth']     = $this->crypto->decrypt($patient['encrypted_date_of_birth']);
+            if (!empty($patient['encrypted_gender']))          $patient['gender']            = $this->crypto->decrypt($patient['encrypted_gender']);
+            if (!empty($patient['encrypted_blood_group']))     $patient['blood_group']       = $this->crypto->decrypt($patient['encrypted_blood_group']);
+            if (!empty($patient['encrypted_address']))         $patient['address']           = $this->crypto->decrypt($patient['encrypted_address']);
             if (!empty($patient['encrypted_emergency_contact'])) $patient['emergency_contact'] = $this->crypto->decrypt($patient['encrypted_emergency_contact']);
         } catch (\Exception $e) {
             app_log('Patient decryption error ID ' . ($patient['id'] ?? '?') . ': ' . $e->getMessage(), 'ERROR');
