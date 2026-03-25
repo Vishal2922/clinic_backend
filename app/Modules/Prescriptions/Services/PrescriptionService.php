@@ -13,10 +13,10 @@ class PrescriptionService
         $this->model = new Prescription();
     }
 
-    // ── List all prescriptions for a tenant (with optional patient filter) ───
-    public function listPrescriptions(int $tenantId, ?int $patientId = null): array
+    // ── List prescriptions for a tenant (optional patient filter + pagination) ───
+    public function listPrescriptions(int $tenantId, ?int $patientId = null, int $page = 1, int $perPage = 10): array
     {
-        return $this->model->getAllByTenant($tenantId, $patientId);
+        return $this->model->getAllByTenant($tenantId, $patientId, $page, $perPage);
     }
 
     // ── Get a single prescription by ID (decrypted) ──────────────────────────

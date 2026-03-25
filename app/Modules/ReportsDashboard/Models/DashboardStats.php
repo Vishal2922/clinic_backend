@@ -85,6 +85,28 @@ class DashboardStats
                    AND due_date < CURDATE()
                 ) AS overdue_invoices,
 
+                (SELECT COUNT(*)
+                 FROM invoices
+                 WHERE tenant_id = :t5d AND deleted_at IS NULL
+                   AND status IN ('unpaid','pending')
+                   AND (due_date >= CURDATE() OR due_date IS NULL)
+                ) AS open_invoices,
+
+                (SELECT COUNT(*)
+                 FROM invoices
+                 WHERE tenant_id = :t5e AND deleted_at IS NULL AND status = 'cancelled'
+                ) AS cancelled_invoices,
+
+                (SELECT COUNT(*)
+                 FROM invoices
+                 WHERE tenant_id = :t5f AND deleted_at IS NULL AND status = 'partially_paid'
+                ) AS partially_paid_invoices,
+
+                (SELECT COUNT(*)
+                 FROM invoices
+                 WHERE tenant_id = :t5g AND deleted_at IS NULL AND status = 'refunded'
+                ) AS refunded_invoices,
+
                 (SELECT COALESCE(SUM(total_amount), 0)
                  FROM invoices
                  WHERE tenant_id = :t6 AND deleted_at IS NULL AND status = 'paid'
@@ -102,9 +124,80 @@ class DashboardStats
                 't3'  => $tenantId, 't3b' => $tenantId, 't3c' => $tenantId,
                 't4'  => $tenantId,
                 't5'  => $tenantId, 't5b' => $tenantId, 't5c' => $tenantId,
+                't5d' => $tenantId, 't5e' => $tenantId, 't5f' => $tenantId, 't5g' => $tenantId,
                 't6'  => $tenantId, 't6b' => $tenantId,
             ]
         );
+
+        // ── Dashboard chart datasets (last 6 months) ─────────────────────────
+        $invoiceStatusBreakdown = [
+            [ 'key' => 'paid',            'label' => 'Paid',      'value' => (int) ($counters['paid_invoices'] ?? 0) ],
+            [ 'key' => 'open',            'label' => 'On Time',  'value' => (int) ($counters['open_invoices'] ?? 0) ],
+            [ 'key' => 'overdue',         'label' => 'Overdue',  'value' => (int) ($counters['overdue_invoices'] ?? 0) ],
+            [ 'key' => 'partially_paid', 'label' => 'Partial',   'value' => (int) ($counters['partially_paid_invoices'] ?? 0) ],
+            [ 'key' => 'refunded',        'label' => 'Refunded',  'value' => (int) ($counters['refunded_invoices'] ?? 0) ],
+            [ 'key' => 'cancelled',       'label' => 'Cancelled', 'value' => (int) ($counters['cancelled_invoices'] ?? 0) ],
+        ];
+
+        $startDate = (new \DateTime('first day of this month'))->modify('-5 months')->format('Y-m-d');
+
+        // Revenue trend uses received payments (paid_at) for better accuracy.
+        $revenueRows = $this->db()->fetchAll(
+            "SELECT DATE_FORMAT(paid_at, '%Y-%m') AS month,
+                    COALESCE(SUM(total_amount), 0) AS revenue
+             FROM invoices
+             WHERE tenant_id = :tid AND deleted_at IS NULL
+               AND status = 'paid'
+               AND paid_at IS NOT NULL
+               AND paid_at >= :start
+             GROUP BY month
+             ORDER BY month",
+            ['tid' => $tenantId, 'start' => $startDate]
+        );
+
+        $revenueMap = [];
+        foreach ($revenueRows as $row) {
+            $revenueMap[$row['month']] = (float) ($row['revenue'] ?? 0);
+        }
+
+        $monthKeys = [];
+        $dt = new \DateTime('first day of this month');
+        for ($i = 5; $i >= 0; $i--) {
+            $monthKeys[] = (clone $dt)->modify("-{$i} months")->format('Y-m');
+        }
+
+        $revenue_last_6_months = [];
+        foreach ($monthKeys as $m) {
+            $revenue_last_6_months[] = [
+                'month'   => $m,
+                'revenue' => $revenueMap[$m] ?? 0,
+            ];
+        }
+
+        // Patients created trend uses patients.created_at.
+        $patientRows = $this->db()->fetchAll(
+            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month,
+                    COUNT(*) AS cnt
+             FROM patients
+             WHERE tenant_id = :tid AND deleted_at IS NULL
+               AND created_at >= :start
+             GROUP BY month
+             ORDER BY month",
+            ['tid' => $tenantId, 'start' => $startDate]
+        );
+
+        $patientMap = [];
+        foreach ($patientRows as $row) {
+            $patientMap[$row['month']] = (int) ($row['cnt'] ?? 0);
+        }
+
+        $patients_created_last_6_months = [];
+        foreach ($monthKeys as $m) {
+            $patients_created_last_6_months[] = [
+                'month' => $m,
+                'count' => $patientMap[$m] ?? 0,
+            ];
+        }
 
         // ── Recent appointments (last 6) ──────────────────────────────────────
         $recentAppointments = $this->db()->fetchAll(
@@ -191,6 +284,9 @@ class DashboardStats
         }, $recentPrescriptions);
 
         return array_merge($counters ?? [], [
+            'invoice_status_breakdown'        => $invoiceStatusBreakdown,
+            'revenue_last_6_months'           => $revenue_last_6_months,
+            'patients_created_last_6_months' => $patients_created_last_6_months,
             'recent_appointments'  => $recentAppointments,
             'recent_invoices'      => $recentInvoices,
             'recent_prescriptions' => $recentPrescriptions,

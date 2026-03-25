@@ -38,18 +38,18 @@ class PrescriptionController extends Controller
         $patientId = $request->getQueryParam('patient_id')
             ? (int) $request->getQueryParam('patient_id')
             : null;
+        $page      = (int) $request->getQueryParam('page', 1);
+        $perPage   = (int) $request->getQueryParam('per_page', 10);
 
         try {
-            $prescriptions = $this->service->listPrescriptions($tenantId, $patientId);
+            $prescriptions = $this->service->listPrescriptions($tenantId, $patientId, $page, $perPage);
 
             Response::json([
-                'status' => 'success',
-                'data'   => $prescriptions,
-                'total'  => count($prescriptions),
+                'message' => 'Prescriptions retrieved',
+                'data'    => $prescriptions,
             ], 200);
         } catch (\Exception $e) {
             Response::json([
-                'status'  => 'error',
                 'message' => 'Failed to fetch prescriptions: ' . $e->getMessage(),
             ], 500);
         }

@@ -94,6 +94,7 @@ class DashboardController extends Controller
         $billingFields = [
             'total_invoices', 'paid_invoices', 'overdue_invoices',
             'revenue_this_month', 'total_revenue', 'recent_invoices',
+            'invoice_status_breakdown', 'revenue_last_6_months',
         ];
         $prescriptionFields = [
             'total_prescriptions', 'pending_prescriptions',
@@ -105,17 +106,18 @@ class DashboardController extends Controller
             'upcoming_appointments', 'appointments_today',
             'active_appointments', 'recent_appointments',
         ];
+        $patientTrendFields = ['patients_created_last_6_months'];
 
         // Define what each role CAN see
         $allowed = match ($role) {
             'Provider' => array_merge(
-                $patientFields, $appointmentFields, $prescriptionFields
+                $patientFields, $patientTrendFields, $appointmentFields, $prescriptionFields
             ),
             'Nurse' => array_merge(
-                $patientFields, $appointmentFields
+                $patientFields, $patientTrendFields, $appointmentFields
             ),
             'Receptionist' => array_merge(
-                $patientFields, $appointmentFields
+                $patientFields, $patientTrendFields, $appointmentFields
             ),
             'Pharmacist' => $prescriptionFields,
             default => [], // Unknown role: no stats

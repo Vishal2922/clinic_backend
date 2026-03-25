@@ -243,6 +243,48 @@ class SettingsController extends Controller
     }
 
     /**
+     * GET /api/settings/theme
+     */
+    public function getTheme(Request $request): void
+    {
+        try {
+            $tenantId = $this->getTenantId();
+            $theme = $this->settingsService->getTheme($tenantId);
+            Response::json(['message' => 'Theme retrieved', 'data' => $theme], 200);
+        } catch (\Exception $e) {
+            app_log('Get theme error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to retrieve theme.', 500);
+        }
+    }
+
+    /**
+     * POST /api/settings/theme
+     * Admin only.
+     */
+    public function updateTheme(Request $request): void
+    {
+        $authUser = $this->getAuthUser();
+        $tenantId = $this->getTenantId();
+        $data = $request->getBody();
+
+        try {
+            $themeData = [
+                'primaryColor' => $data['primaryColor'] ?? '#20b486'
+            ];
+            $result = $this->settingsService->updateTheme($tenantId, $themeData, $authUser['user_id'], [
+                'tenant_id' => $tenantId,
+                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+            ]);
+            Response::json(['message' => 'Theme updated', 'data' => $result], 200);
+        } catch (\Exception $e) {
+            app_log('Update theme error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to update theme.', 500);
+        }
+    }
+
+
+    /**
      * GET /api/settings/audit-log
      * Admin only: View security audit log.
      */

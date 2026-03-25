@@ -172,6 +172,36 @@ class SettingsService
         return $this->sessionModel->getActiveSessions($userId);
     }
 
+    public function getTheme(int $tenantId): array
+    {
+        $setting = $this->db()->fetch(
+            'SELECT setting_value FROM tenant_settings WHERE tenant_id = :tid AND setting_key = :key',
+            ['tid' => $tenantId, 'key' => 'theme']
+        );
+        if ($setting && $setting['setting_value']) {
+            return json_decode($setting['setting_value'], true);
+        }
+        return ['primaryColor' => '#20b486'];
+    }
+
+    public function updateTheme(int $tenantId, array $themeData, int $userId, array $requestMeta = []): array
+    {
+        $jsonValue = json_encode($themeData);
+        $this->db()->execute(
+            'INSERT INTO tenant_settings (tenant_id, setting_key, setting_value, created_at, updated_at)
+             VALUES (:tid, :key, :val, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE setting_value = :val2, updated_at = NOW()',
+            [
+                'tid' => $tenantId,
+                'key' => 'theme',
+                'val' => $jsonValue,
+                'val2' => $jsonValue
+            ]
+        );
+        $this->logAudit($userId, $tenantId, 'THEME_UPDATED', 'tenant_settings', null, $requestMeta);
+        return $themeData;
+    }
+
     public function invalidateSession(int $sessionId, int $userId, array $requestMeta = []): bool
     {
         $result = $this->sessionModel->invalidate($sessionId, $userId);
