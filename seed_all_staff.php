@@ -15,7 +15,7 @@
 // CONFIG — must match your .env / WAMP settings
 // ════════════════════════════════════════════════
 $DB_HOST = '127.0.0.1';
-$DB_PORT = '3308';
+$DB_PORT = '3306';
 $DB_USER = 'root';
 $DB_PASS = '';
 $ENCRYPTION_KEY = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6';
