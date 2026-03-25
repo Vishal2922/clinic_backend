@@ -210,3 +210,14 @@ CREATE TABLE IF NOT EXISTS `user_sessions` (
     `last_active` DATETIME,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- TENANT SETTINGS
+CREATE TABLE IF NOT EXISTS `tenant_settings` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `tenant_id` INT UNSIGNED,
+    `setting_key` VARCHAR(100) NOT NULL,
+    `setting_value` TEXT,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME,
+    UNIQUE KEY `uq_tenant_setting` (`tenant_id`, `setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
