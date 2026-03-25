@@ -196,12 +196,19 @@ $router->group(['prefix' => '/api/calendar', 'middleware' => [$tenant, $auth]], 
 // ═══════════════════════════════════════════════════════════
 // MODULE 11: SETTINGS & SECURITY
 // ═══════════════════════════════════════════════════════════
+
+// Public settings (Tenant scoped only, no Auth required)
+$router->group(['prefix' => '/api/settings', 'middleware' => [$tenant]], function ($router) {
+    $router->get('/theme', [SettingsController::class, 'getTheme']);
+});
+
 $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated, $adminOnly, $csrf) {
 
     $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
     $router->post('/logout',          [SettingsController::class, 'logout'],         [$allAuthenticated, $csrf]);
     $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],      [$allAuthenticated, $csrf]);
   
+    $router->post('/theme',           [SettingsController::class, 'updateTheme'],    [$adminOnly, $csrf]);
 
     $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'], [$allAuthenticated]);
 

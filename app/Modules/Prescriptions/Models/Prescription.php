@@ -123,8 +123,8 @@ class Prescription
         );
     }
 
-    // ── LIST ALL for tenant (optional patient filter) ─────────────────────────
-    public function getAllByTenant(int $tenantId, ?int $patientId = null): array
+    // ── LIST for tenant (optional patient filter + pagination) ───────────────
+    public function getAllByTenant(int $tenantId, ?int $patientId = null, int $page = 1, int $perPage = 10): array
     {
         $where  = 'p.tenant_id = :tenant_id';
         $params = ['tenant_id' => $tenantId];
@@ -134,6 +134,14 @@ class Prescription
             $params['patient_id'] = $patientId;
         }
 
+        $offset = ($page - 1) * $perPage;
+
+        $countResult = $this->db()->fetch(
+            "SELECT COUNT(*) as total FROM prescriptions p WHERE {$where}",
+            $params
+        );
+        $total = (int) ($countResult['total'] ?? 0);
+
         $rows = $this->db()->fetchAll(
             "SELECT p.*,
                     pt.encrypted_name     AS patient_enc_name,
@@ -142,10 +150,21 @@ class Prescription
              LEFT JOIN patients pt ON pt.id = p.patient_id AND pt.tenant_id = p.tenant_id
              LEFT JOIN users u     ON u.id  = p.provider_id
              WHERE {$where}
-             ORDER BY p.created_at DESC",
-            $params
+             ORDER BY p.created_at DESC
+             LIMIT :limit OFFSET :offset",
+            array_merge($params, ['limit' => $perPage, 'offset' => $offset])
         );
 
-        return array_map([$this, 'decrypt'], $rows);
+        $rows = array_map([$this, 'decrypt'], $rows);
+
+        return [
+            'prescriptions' => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'per_page'    => $perPage,
+                'total_pages' => $total > 0 ? (int) ceil($total / $perPage) : 0,
+            ],
+        ];
     }
 }
