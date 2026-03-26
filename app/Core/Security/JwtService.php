@@ -47,8 +47,9 @@ class JwtService
             'tenant_id'   => $payload['tenant_id'],
             'role_id'     => $payload['role_id'],
             'role_name'   => $payload['role_name'],
-            'scope' => $payload['scope'] ?? 'tenant',
+            'scope'       => $payload['scope'] ?? 'tenant',
             'username'    => $payload['username'],
+            'patient_id'  => $payload['patient_id'] ?? null,
             'permissions' => $payload['permissions'] ?? [],
         ];
 

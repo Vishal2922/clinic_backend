@@ -29,17 +29,29 @@ class PrescriptionController extends Controller
 
     /**
      * GET /api/prescriptions
-     * Role: Provider, Pharmacist, Admin  ($staff middleware)
-     * Optional: ?patient_id=123  to filter by patient
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Patient: forced to own prescriptions only
+     * Staff: optional ?patient_id=123 to filter by patient
      */
     public function index(Request $request): void
     {
         $tenantId  = $this->getTenantId();
-        $patientId = $request->getQueryParam('patient_id')
-            ? (int) $request->getQueryParam('patient_id')
-            : null;
-        $page      = (int) $request->getQueryParam('page', 1);
-        $perPage   = (int) $request->getQueryParam('per_page', 10);
+        $user      = $this->getAuthUser();
+        $userRole  = $user['role_name'] ?? '';
+
+        if ($userRole === 'Patient') {
+            $patientId = $user['patient_id'] ?? null;
+            if (!$patientId) {
+                Response::error('Account not linked to patient record.', 403);
+            }
+        } else {
+            $patientId = $request->getQueryParam('patient_id')
+                ? (int) $request->getQueryParam('patient_id')
+                : null;
+        }
+
+        $page    = (int) $request->getQueryParam('page', 1);
+        $perPage = (int) $request->getQueryParam('per_page', 10);
 
         try {
             $prescriptions = $this->service->listPrescriptions($tenantId, $patientId, $page, $perPage);
@@ -52,6 +64,74 @@ class PrescriptionController extends Controller
             Response::json([
                 'message' => 'Failed to fetch prescriptions: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * GET /api/prescriptions/{id}
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Patient: ownership enforced
+     */
+    public function show(Request $request, string $id): void
+    {
+        $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
+
+        try {
+            $prescription = $this->service->getPrescriptionById((int) $id, $tenantId);
+            if (!$prescription) {
+                Response::error('Prescription not found.', 404);
+            }
+
+            if ($userRole === 'Patient' && (int) ($prescription['patient_id'] ?? 0) !== (int) ($user['patient_id'] ?? 0)) {
+                Response::error('Access denied.', 403);
+            }
+
+            Response::json(['message' => 'Prescription retrieved', 'data' => $prescription], 200);
+        } catch (\Exception $e) {
+            Response::error('Failed to retrieve prescription.', 500);
+        }
+    }
+
+    /**
+     * GET /api/prescriptions/{id}/download
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Returns structured data for frontend PDF generation.
+     * Patient: ownership enforced
+     */
+    public function download(Request $request, string $id): void
+    {
+        $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
+
+        try {
+            $prescription = $this->service->getPrescriptionById((int) $id, $tenantId);
+            if (!$prescription) {
+                Response::error('Prescription not found.', 404);
+            }
+
+            if ($userRole === 'Patient' && (int) ($prescription['patient_id'] ?? 0) !== (int) ($user['patient_id'] ?? 0)) {
+                Response::error('Access denied.', 403);
+            }
+
+            Response::json([
+                'message' => 'Prescription download data',
+                'data'    => [
+                    'id'            => $prescription['id'],
+                    'patient_name'  => $prescription['patient_name'] ?? '',
+                    'provider_name' => $prescription['provider_name'] ?? '',
+                    'medicine_name' => $prescription['medicine_name_plain'] ?? '',
+                    'dosage'        => $prescription['dosage_plain'] ?? '',
+                    'duration_days' => $prescription['duration_days'] ?? 7,
+                    'notes'         => $prescription['notes_plain'] ?? '',
+                    'status'        => $prescription['status'] ?? '',
+                    'created_at'    => $prescription['created_at'] ?? '',
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            Response::error('Failed to generate prescription download.', 500);
         }
     }
 
@@ -108,6 +188,17 @@ class PrescriptionController extends Controller
                 'prescription',
                 '💊 New Prescription Awaiting Dispense',
                 "Prescription #{$id} for Patient #{$data['patient_id']} — please review and dispense",
+                'prescription',
+                $id
+            );
+            
+            // Notify the Patient about the new prescription
+            NotificationHelper::notifyPatient(
+                $tenantId,
+                (int) $data['patient_id'],
+                'prescription',
+                '💊 New Prescription Issued',
+                "A new prescription has been issued for you. Please check your portal for details.",
                 'prescription',
                 $id
             );

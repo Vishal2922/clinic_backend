@@ -132,8 +132,16 @@ class Invoice
         return $affected > 0;
     }
 
-    public function getSummary(int $tenantId): array
+    public function getSummary(int $tenantId, ?int $patientId = null): array
     {
+        $where = "tenant_id = :tid AND deleted_at IS NULL";
+        $params = ['tid' => $tenantId];
+
+        if ($patientId) {
+            $where .= " AND patient_id = :pid";
+            $params['pid'] = $patientId;
+        }
+
         $result = $this->db()->fetch(
             "SELECT
             COUNT(*) AS total_invoices,
@@ -150,8 +158,8 @@ class Invoice
                 THEN total_amount ELSE 0 END), 0) AS revenue_this_month,
             COALESCE(SUM(total_amount), 0) AS total_revenue
          FROM invoices
-         WHERE tenant_id = :tid AND deleted_at IS NULL",
-            ['tid' => $tenantId]
+         WHERE $where",
+            $params
         );
         return $result ?? [];
     }

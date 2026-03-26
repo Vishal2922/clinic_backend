@@ -75,3 +75,12 @@ WHERE `permission_key` IN (
     'prescriptions.view','prescriptions.dispense',
     'patients.view'
 );
+
+-- Patient (role_id=6)
+INSERT INTO `role_permissions` (`role_id`, `permission_id`, `created_at`)
+SELECT 6, id, NOW() FROM `permissions`
+WHERE `permission_key` IN (
+    'appointments.view','appointments.create',
+    'prescriptions.view',
+    'billing.view'
+);

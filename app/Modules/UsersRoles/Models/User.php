@@ -23,7 +23,7 @@ class User
         $user = $this->db()->fetch(
             'SELECT u.id, u.role_id, u.username, u.encrypted_email,
                     u.encrypted_full_name, u.encrypted_phone, u.status,
-                    u.created_at, u.updated_at, r.name AS role_name
+                    u.created_at, u.updated_at, u.patient_id, r.name AS role_name
              FROM users u
              JOIN roles r ON u.role_id = r.id
              WHERE u.id = :id AND u.deleted_at IS NULL',
@@ -34,6 +34,15 @@ class User
             $user = $this->decryptUserData($user);
         }
 
+        return $user;
+    }
+
+    public function findByPatientId(int $patientId, int $tenantId): ?array
+    {
+        $user = $this->db()->fetch(
+            'SELECT id, username FROM users WHERE patient_id = :pid AND deleted_at IS NULL',
+            ['pid' => $patientId]
+        );
         return $user;
     }
 
@@ -95,6 +104,21 @@ class User
                 'total_pages' => ceil($total / $perPage),
             ],
         ];
+    }
+
+    public function getProvidersByTenant(int $tenantId): array
+    {
+        $users = $this->db()->fetchAll(
+            "SELECT u.id, u.username, u.encrypted_full_name, r.name AS role_name
+             FROM users u
+             JOIN roles r ON u.role_id = r.id
+             WHERE u.deleted_at IS NULL
+               AND u.status = 'active'
+               AND r.name = 'Provider'
+             ORDER BY u.created_at DESC"
+        );
+
+        return array_map([$this, 'decryptUserData'], $users);
     }
 
     public function create(array $data, int $tenantId): int

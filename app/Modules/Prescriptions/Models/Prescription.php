@@ -150,6 +150,7 @@ class Prescription
              LEFT JOIN patients pt ON pt.id = p.patient_id AND pt.tenant_id = p.tenant_id
              LEFT JOIN users u     ON u.id  = p.provider_id
              WHERE {$where}
+             GROUP BY p.id
              ORDER BY p.created_at DESC
              LIMIT :limit OFFSET :offset",
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])

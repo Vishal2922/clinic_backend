@@ -29,7 +29,7 @@ class TenantDatabase
             $this->pdo = new PDO($dsn, $user, $pass, [
                 PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::ATTR_EMULATE_PREPARES   => true, // Required to reuse named parameters multiple times
             ]);
         } catch (PDOException $e) {
             error_log("[TenantDB:{$tenantCode}] Connection failed: " . $e->getMessage());
