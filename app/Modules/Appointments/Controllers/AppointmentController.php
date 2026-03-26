@@ -5,6 +5,7 @@ namespace App\Modules\Appointments\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Modules\Appointments\Services\SchedulingService;
 use App\Modules\Appointments\Models\Appointment;
 
@@ -43,12 +44,27 @@ class AppointmentController extends Controller
     public function index(Request $request): void
     {
         $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
+
+        if ($userRole === 'Patient') {
+            $patientId = $user['patient_id'] ?? null;
+        } else {
+            $patientId = $request->getQueryParam('patient_id') 
+                ? (int) $request->getQueryParam('patient_id') 
+                : null;
+        }
+
         $status   = $request->getQueryParam('status');
         $page     = (int) $request->getQueryParam('page', 1);
         $perPage  = (int) $request->getQueryParam('per_page', 15);
 
         try {
-            $result = $this->appointmentModel->getAllByTenant($tenantId, $status, $page, $perPage);
+            $result = $this->appointmentModel->getAllByTenant($tenantId, $patientId, $status, $page, $perPage);
+            // DEBUG LOG
+            if ($patientId == 5) {
+                app_log("DEBUG: Appointments for patient 5: " . json_encode($result['appointments']), 'DEBUG');
+            }
             Response::json(['message' => 'Appointments retrieved', 'data' => $result], 200);
         } catch (\Exception $e) {
             app_log('List appointments error: ' . $e->getMessage(), 'ERROR');
@@ -64,7 +80,16 @@ class AppointmentController extends Controller
     public function store(Request $request): void
     {
         $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
         $data     = $request->getBody();
+
+        if ($userRole === 'Patient') {
+            $data['patient_id'] = $user['patient_id'] ?? null;
+            if (!$data['patient_id']) {
+                Response::error('Your account is not linked to a patient record. Contact admin.', 403);
+            }
+        }
 
         $errors = $this->validate($data, [
             'patient_id'       => 'required|numeric',
@@ -99,10 +124,24 @@ class AppointmentController extends Controller
                 'doctor_id'        => (int) $data['doctor_id'],
                 'appointment_time' => $data['appointment_time'],
                 'reason'           => $data['reason'] ?? null,
-                'status'           => 'scheduled',
+                'status'           => 'pending',
             ]);
 
             $appointment = $this->appointmentModel->findById($id, $tenantId);
+
+            // Notify the assigned doctor about pending approval
+            $patientName = $appointment['patient_name'] ?? "Patient #{$data['patient_id']}";
+            $timeStr = date('d M Y, h:i A', strtotime($data['appointment_time']));
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $data['doctor_id'],
+                'appointment',
+                '📅 Appointment Pending Approval',
+                "New booking request from {$patientName} on {$timeStr}. Please accept or decline.",
+                'appointment',
+                $id
+            );
+
             Response::json(['message' => 'Appointment booked successfully!', 'data' => $appointment], 201);
 
         } catch (\Exception $e) {
@@ -120,7 +159,7 @@ class AppointmentController extends Controller
         $data     = $request->getBody();
 
         $errors = $this->validate($data, [
-            'status' => 'required|in:scheduled,arrived,in-consultation,completed,cancelled',
+            'status' => 'required|in:pending,scheduled,arrived,in-consultation,completed,cancelled,declined',
         ]);
 
         if (!empty($errors)) {
@@ -137,8 +176,52 @@ class AppointmentController extends Controller
                 Response::error('Cannot modify a completed appointment.', 422);
             }
 
+            // Prevent marking future appointments as completed
+            if ($data['status'] === 'completed' && strtotime($appointment['appointment_time']) > time()) {
+                Response::error('Cannot mark a future appointment as completed.', 422);
+            }
+
             $this->appointmentModel->updateStatus((int) $id, $tenantId, $data['status']);
             $updated = $this->appointmentModel->findById((int) $id, $tenantId);
+
+            // 1. Notify the doctor about status change (Staff/Admin could have changed it)
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $appointment['doctor_id'],
+                'appointment',
+                '📅 Appointment Status Updated',
+                "Appointment #{$id} status changed to {$data['status']}",
+                'appointment',
+                (int) $id
+            );
+
+            // 2. NEW AD-ON LOGIC: Notify patient on Accept/Decline
+            $userModel = new \App\Modules\UsersRoles\Models\User();
+            $patientUser = $userModel->findByPatientId((int)$appointment['patient_id'], $tenantId);
+
+            if ($patientUser) {
+                $statusMsg = '';
+                $title     = '';
+                if ($data['status'] === 'scheduled') {
+                    $title     = '✅ Appointment Confirmed';
+                    $statusMsg = "Doctor {$appointment['doctor_name']} has accepted your appointment request.";
+                } elseif ($data['status'] === 'declined') {
+                    $title     = '❌ Appointment Declined';
+                    $statusMsg = "Doctor {$appointment['doctor_name']} has declined your appointment request.";
+                }
+
+                if ($statusMsg) {
+                    NotificationHelper::notifyUser(
+                        $tenantId,
+                        (int)$patientUser['id'],
+                        'appointment',
+                        $title,
+                        $statusMsg,
+                        'appointment',
+                        (int)$id
+                    );
+                }
+            }
 
             Response::json([
                 'message' => "Appointment status updated to {$data['status']}",
@@ -157,6 +240,8 @@ class AppointmentController extends Controller
     public function destroy(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
 
         try {
             $appointment = $this->appointmentModel->findById((int) $id, $tenantId);
@@ -164,7 +249,28 @@ class AppointmentController extends Controller
                 Response::error('Appointment not found.', 404);
             }
 
+            // Patient can only cancel own appointments
+            if ($userRole === 'Patient') {
+                $patientId = $user['patient_id'] ?? null;
+                if (!$patientId || (int) $appointment['patient_id'] !== (int) $patientId) {
+                    Response::error('Access denied.', 403);
+                }
+            }
+
             $this->appointmentModel->updateStatus((int) $id, $tenantId, 'cancelled');
+
+            // Notify the doctor about cancellation
+            $patientName = $appointment['patient_name'] ?? "Patient #{$appointment['patient_id']}";
+            NotificationHelper::notifyUser(
+                $tenantId,
+                (int) $appointment['doctor_id'],
+                'appointment',
+                '❌ Appointment Cancelled',
+                "Appointment with {$patientName} has been cancelled",
+                'appointment',
+                (int) $id
+            );
+
             Response::json(['message' => 'Appointment cancelled successfully.'], 200);
 
         } catch (\Exception $e) {

@@ -58,7 +58,7 @@ class StaffService
      * Validates that:
      *  - The user exists in the same tenant
      *  - The user doesn't already have a staff record
-     *  - The user has a staff-eligible role (not Patient)
+     *  - Updates the user's role if role_id is provided
      */
     public function createStaff(array $data, int $tenantId): array
     {
@@ -70,20 +70,14 @@ class StaffService
             throw new \RuntimeException('User not found in this tenant');
         }
 
-        // Check the user's role is staff-eligible
-        $nonStaffRoles = ['Patient'];
-        if (in_array($user['role_name'] ?? '', $nonStaffRoles, true)) {
-            throw new \RuntimeException('Patients cannot be added as staff. Change role first.');
-        }
-
         // Check for duplicate staff record
         if ($this->staffModel->existsForUser($userId, $tenantId)) {
             throw new \RuntimeException('This user already has a staff record');
         }
 
-        // Optionally update the user's role if provided
+        // If a new role_id is provided, update the user's role
         if (!empty($data['role_id'])) {
-            $role = $this->roleModel->findById((int) $data['role_id'], $tenantId);
+            $role = $this->roleModel->findById((int) $data['role_id']);
             if (!$role) {
                 throw new \RuntimeException('Invalid role for this tenant');
             }

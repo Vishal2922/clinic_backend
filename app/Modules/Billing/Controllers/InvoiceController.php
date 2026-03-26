@@ -5,27 +5,10 @@ namespace App\Modules\Billing\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Modules\Billing\Models\Invoice;
 use App\Modules\Billing\Services\BillingService;
 
-/**
- * InvoiceController
- *
- * Manages invoices and payments within tenant scope.
- *
- * Role access:
- *  Admin    -> full access (list, create, update status, delete, summary)
- *  Provider -> list, create, update status (pending/paid/overdue only)
- *  Patient  -> view own invoices, mark as paid only
- *
- * Routes:
- *  GET    /api/billing/invoices             -> index
- *  POST   /api/billing/invoices             -> store
- *  GET    /api/billing/invoices/{id}        -> show
- *  PATCH  /api/billing/invoices/{id}/status -> updateStatus
- *  DELETE /api/billing/invoices/{id}        -> destroy
- *  GET    /api/billing/summary              -> summary
- */
 class InvoiceController extends Controller
 {
     private Invoice $invoiceModel;
@@ -37,25 +20,17 @@ class InvoiceController extends Controller
         $this->billingService = new BillingService();
     }
 
-    /**
-     * GET /api/billing/invoices
-     * List all invoices for the tenant.
-     * Patients automatically see only their own invoices.
-     *
-     * Query params: patient_id, status, page, per_page
-     */
     public function index(Request $request, $id = null): void
     {
-        $tenantId = $this->getTenantId();
-        $user     = $this->getAuthUser();
-        $userRole = $user['role_name'] ?? '';
+        $tenantId  = $this->getTenantId();
+        $user      = $this->getAuthUser();
+        $userRole  = $user['role_name'] ?? '';
 
         $patientId = $request->getQueryParam('patient_id');
         $status    = $request->getQueryParam('status');
         $page      = (int) $request->getQueryParam('page', 1);
         $perPage   = (int) $request->getQueryParam('per_page', 15);
 
-        // Patients can only see their own invoices
         if ($userRole === 'Patient') {
             $patientId = $user['patient_id'] ?? null;
         }
@@ -84,23 +59,18 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * POST /api/billing/invoices
-     * Generate a new invoice. Roles: Admin, Provider.
-     *
-     * Body params:
-     *  - patient_id     (required)
-     *  - amount         (required) numeric, base amount before tax
-     *  - tax_percent    (optional) default 0
-     *  - appointment_id (optional)
-     *  - due_date       (optional) YYYY-MM-DD
-     *  - notes          (optional)
-     */
     public function store(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();
         $user     = $this->getAuthUser();
         $data     = $request->getBody();
+
+        // FIX: frontend sends `amount` (subtotal from line items).
+        // Accept `amount` directly, or fall back to `total_amount` if
+        // the client only sent the grand total.
+        if (!isset($data['amount']) && isset($data['total_amount'])) {
+            $data['amount'] = $data['total_amount'];
+        }
 
         $errors = $this->validate($data, [
             'patient_id'  => 'required|numeric',
@@ -116,19 +86,16 @@ class InvoiceController extends Controller
             Response::error('Amount must be greater than zero.', 422);
         }
 
-        // FIX: Use the correct variable $user instead of undefined $authUser
-        // FIX: Use 'user_id' key which is what getAuthUser() returns
         $providerId = $user['user_id'] ?? null;
-        
+
         if (!$providerId) {
             Response::error('Unable to identify provider. Please re-login.', 401);
         }
 
-        // Verify the provider exists in users table
-        $db = \App\Core\Database::getInstance();
+        $db = tenant_db();
         $providerExists = $db->fetch(
-            'SELECT id FROM users WHERE id = :id AND tenant_id = :tid AND deleted_at IS NULL',
-            ['id' => $providerId, 'tid' => $tenantId]
+            'SELECT id FROM users WHERE id = :id AND deleted_at IS NULL',
+            ['id' => $providerId]
         );
 
         if (!$providerExists) {
@@ -138,6 +105,30 @@ class InvoiceController extends Controller
         try {
             $result  = $this->billingService->generateInvoice($data, $tenantId, (int) $providerId);
             $invoice = $this->invoiceModel->findById($result['id'], $tenantId);
+
+            // Notify all Admins about the new invoice
+            $invoiceNum = $invoice['invoice_number'] ?? "INV-" . str_pad($result['id'], 4, '0', STR_PAD_LEFT);
+            $amount = number_format((float) ($invoice['total_amount'] ?? $data['amount']), 2);
+            NotificationHelper::notifyRole(
+                $tenantId,
+                'Admin',
+                'billing',
+                '🧾 New Invoice Generated',
+                "Invoice {$invoiceNum} created for ₹{$amount}",
+                'invoice',
+                (int) $result['id']
+            );
+            
+            // Notify the Patient about the new invoice
+            NotificationHelper::notifyPatient(
+                $tenantId,
+                (int) $data['patient_id'],
+                'billing',
+                '🧾 New Invoice Generated',
+                "A new invoice ({$invoiceNum}) for ₹{$amount} has been generated for your record.",
+                'invoice',
+                (int) $result['id']
+            );
 
             Response::json([
                 'message' => 'Invoice generated successfully.',
@@ -150,10 +141,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * GET /api/billing/invoices/{id}
-     * Retrieve a single invoice by ID.
-     */
     public function show(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -167,7 +154,6 @@ class InvoiceController extends Controller
                 Response::error('Invoice not found.', 404);
             }
 
-            // Patients can only view their own invoices
             if ($userRole === 'Patient' && (int) $invoice['patient_id'] !== (int) ($user['patient_id'] ?? 0)) {
                 Response::error('Access denied.', 403);
             }
@@ -183,13 +169,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * PATCH /api/billing/invoices/{id}/status
-     * Update invoice payment status.
-     *
-     * Body params:
-     *  - status (required) pending | paid | overdue | cancelled
-     */
     public function updateStatus(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -198,7 +177,6 @@ class InvoiceController extends Controller
         $data     = $request->getBody();
 
         $errors = $this->validate($data, [
-            // FIX: validation list now matches BillingService::STATUSES and the DB ENUM fully
             'status' => 'required|in:pending,paid,partially_paid,overdue,cancelled,refunded',
         ]);
 
@@ -216,7 +194,6 @@ class InvoiceController extends Controller
                 Response::error("Your role is not permitted to set status to '{$data['status']}'.", 403);
             }
 
-            // Patients can only update their own invoice
             if ($userRole === 'Patient' && (int) $invoice['patient_id'] !== (int) ($user['patient_id'] ?? 0)) {
                 Response::error('Access denied.', 403);
             }
@@ -225,12 +202,37 @@ class InvoiceController extends Controller
                 Response::error('Cannot modify a cancelled invoice.', 422);
             }
 
+            if ($invoice['status'] === 'paid') {
+                Response::error('Cannot modify a paid invoice.', 422);
+            }
+
+            // Require payment_method when Patient marks as paid
+            if ($userRole === 'Patient' && $data['status'] === 'paid') {
+                if (empty($data['payment_method'])) {
+                    Response::error('Payment method is required when marking as paid.', 422);
+                }
+            }
+
             $paidAt        = ($data['status'] === 'paid') ? date('Y-m-d H:i:s') : null;
-            // FIX: pass payment_method from request body — original ignored it, so it was never saved
             $paymentMethod = $data['payment_method'] ?? null;
             $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
 
             $updated = $this->invoiceModel->findById((int) $id, $tenantId);
+
+            // Notify Admins when invoice is paid
+            if ($data['status'] === 'paid') {
+                $invoiceNum = $updated['invoice_number'] ?? "INV-" . str_pad($id, 4, '0', STR_PAD_LEFT);
+                $amount = number_format((float) ($updated['total_amount'] ?? 0), 2);
+                NotificationHelper::notifyRole(
+                    $tenantId,
+                    'Admin',
+                    'billing',
+                    '💰 Invoice Payment Received',
+                    "Invoice {$invoiceNum} has been paid — ₹{$amount}",
+                    'invoice',
+                    (int) $id
+                );
+            }
 
             Response::json([
                 'message' => "Invoice status updated to '{$data['status']}'.",
@@ -243,10 +245,6 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * DELETE /api/billing/invoices/{id}
-     * Soft delete an invoice. Role: Admin only.
-     */
     public function destroy(Request $request, string $id): void
     {
         $tenantId = $this->getTenantId();
@@ -267,17 +265,15 @@ class InvoiceController extends Controller
         }
     }
 
-    /**
-     * GET /api/billing/summary
-     * Pending/paid/overdue totals for the tenant.
-     * Roles: Admin, Provider.
-     */
     public function summary(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
 
         try {
-            $summary = $this->invoiceModel->getSummary($tenantId);
+            $patientId = ($userRole === 'Patient') ? ($user['patient_id'] ?? 0) : null;
+            $summary   = $this->invoiceModel->getSummary($tenantId, $patientId ? (int) $patientId : null);
 
             Response::json([
                 'message' => 'Billing summary retrieved.',

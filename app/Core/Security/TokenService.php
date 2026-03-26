@@ -2,7 +2,6 @@
 
 namespace App\Core\Security;
 
-use App\Core\Database;
 use App\Core\Middleware\CsrfGuard;
 use App\Modules\AuthTenant\Models\RefreshToken;
 
@@ -18,16 +17,17 @@ class TokenService
         $this->refreshTtl  = (int) env('JWT_REFRESH_TTL', 604800);
         $this->cookieConfig = [
             'name'     => env('REFRESH_COOKIE_NAME', 'refresh_token'),
-            'httponly'  => true,
+            'httponly' => true,
             'secure'   => (bool) env('REFRESH_COOKIE_SECURE', false),
-            'samesite' => env('REFRESH_COOKIE_SAMESITE', 'Strict'),
-            'path'     => '/',
+            'samesite' => env('REFRESH_COOKIE_SAMESITE', 'Lax'),
+            'path'     => env('REFRESH_COOKIE_PATH', '/'),
+            // Leading-dot domain allows the cookie to be sent by ALL subdomains.
+            // e.g. REFRESH_COOKIE_DOMAIN=.localhost → apollo.localhost sends it too.
+            // Empty string = PHP default (current host only) — no domain attribute set.
+            'domain'   => env('REFRESH_COOKIE_DOMAIN', ''),
         ];
     }
 
-    /**
-     * Generate a refresh token, store hashed in DB via Model, return raw token
-     */
     public function createRefreshToken(int $userId, int $tenantId, ?string $family = null): string
     {
         $rawToken  = bin2hex(random_bytes(32));
@@ -40,25 +40,16 @@ class TokenService
         return $rawToken;
     }
 
-    /**
-     * Validate refresh token using Model
-     * Returns token record or null
-     * Detects token reuse (potential theft) and revokes entire family
-     */
     public function validateRefreshToken(string $rawToken): ?array
     {
         $tokenHash = hash('sha256', $rawToken);
 
-        // Try to find a valid (non-revoked, non-expired) token
         $record = $this->refreshTokenModel->findValidByHash($tokenHash);
 
         if (!$record) {
-            // Check if this is a REVOKED token — possible token theft!
             $revokedRecord = $this->refreshTokenModel->findRevokedByHash($tokenHash);
 
             if ($revokedRecord) {
-                // SECURITY ALERT: Token reuse detected
-                // Revoke the entire token family to protect the user
                 $this->refreshTokenModel->revokeFamily($revokedRecord['family']);
                 app_log(
                     "SECURITY: Refresh token reuse detected! Family revoked: {$revokedRecord['family']}",
@@ -69,7 +60,6 @@ class TokenService
             return null;
         }
 
-        // Check user is still active
         if ($record['user_status'] !== 'active') {
             return null;
         }
@@ -77,21 +67,14 @@ class TokenService
         return $record;
     }
 
-    /**
-     * Rotate refresh token: revoke old, create new in same family
-     * Also regenerates CSRF token for security
-     * 
-     * Returns array with new refresh token and new CSRF token, or null on failure
-     */
     public function rotateRefreshToken(string $oldRawToken, int $userId, int $tenantId): ?array
     {
         $oldHash = hash('sha256', $oldRawToken);
-        $db = Database::getInstance();
+        $db = tenant_db();
 
         $db->beginTransaction();
 
         try {
-            // Find old token via Model
             $oldRecord = $this->refreshTokenModel->findByHash($oldHash);
 
             if (!$oldRecord) {
@@ -99,13 +82,10 @@ class TokenService
                 return null;
             }
 
-            // Revoke old token via Model
             $this->refreshTokenModel->revokeById((int) $oldRecord['id']);
 
-            // Create new token in same family
             $newRefreshToken = $this->createRefreshToken($userId, $tenantId, $oldRecord['family']);
 
-            // Regenerate CSRF token during rotation
             $newCsrfToken = CsrfGuard::regenerate();
 
             $db->commit();
@@ -123,71 +103,63 @@ class TokenService
         }
     }
 
-    /**
-     * Revoke all tokens in a family (security measure)
-     */
     public function revokeTokenFamily(string $family): void
     {
         $this->refreshTokenModel->revokeFamily($family);
     }
 
-    /**
-     * Revoke all tokens for a user (logout from all devices)
-     */
     public function revokeAllUserTokens(int $userId): void
     {
         $this->refreshTokenModel->revokeAllByUser($userId);
     }
 
-    /**
-     * Revoke a specific token by raw value
-     */
     public function revokeToken(string $rawToken): void
     {
         $tokenHash = hash('sha256', $rawToken);
         $this->refreshTokenModel->revokeByHash($tokenHash);
     }
 
-    /**
-     * Cleanup expired and revoked tokens from DB
-     */
     public function cleanupExpiredTokens(): int
     {
         return $this->refreshTokenModel->deleteExpiredAndRevoked();
     }
 
-    /**
-     * Set refresh token as HttpOnly cookie
-     */
     public function setRefreshTokenCookie(string $rawToken): void
     {
-        setcookie(
-            $this->cookieConfig['name'],
-            $rawToken,
-            [
-                'expires'  => time() + $this->refreshTtl,
-                'path'     => $this->cookieConfig['path'],
-                'httponly'  => $this->cookieConfig['httponly'],
-                'secure'   => $this->cookieConfig['secure'],
-                'samesite' => $this->cookieConfig['samesite'],
-            ]
-        );
+        $options = [
+            'expires'  => time() + $this->refreshTtl,
+            'path'     => $this->cookieConfig['path'],
+            'httponly' => $this->cookieConfig['httponly'],
+            'secure'   => $this->cookieConfig['secure'],
+            'samesite' => $this->cookieConfig['samesite'],
+        ];
+
+        // Only set domain attribute when explicitly configured.
+        // Empty string means PHP omits the domain attribute — browser scopes
+        // the cookie to the exact host that set it.
+        if (!empty($this->cookieConfig['domain'])) {
+            $options['domain'] = $this->cookieConfig['domain'];
+        }
+
+        setcookie($this->cookieConfig['name'], $rawToken, $options);
     }
 
-    /**
-     * Clear refresh token cookie
-     */
     public function clearRefreshTokenCookie(): void
     {
-        setcookie(
-            $this->cookieConfig['name'],
-            '',
-            [
-                'expires'  => time() - 3600,
-                'path'     => $this->cookieConfig['path'],
-                'httponly'  => true,
-                'samesite' => 'Strict',
-            ]
-        );
+        $options = [
+            'expires'  => time() - 3600,
+            'path'     => $this->cookieConfig['path'],
+            'httponly' => $this->cookieConfig['httponly'],
+            'secure'   => $this->cookieConfig['secure'],
+            'samesite' => $this->cookieConfig['samesite'],
+        ];
+
+        // Must match the domain used when setting — otherwise the browser
+        // won't find the cookie to delete it.
+        if (!empty($this->cookieConfig['domain'])) {
+            $options['domain'] = $this->cookieConfig['domain'];
+        }
+
+        setcookie($this->cookieConfig['name'], '', $options);
     }
 }

@@ -4,18 +4,6 @@ namespace App\Modules\Prescriptions\Services;
 
 use App\Modules\Prescriptions\Models\Prescription;
 
-/**
- * PrescriptionService: Fixed Version.
- * Bugs Fixed:
- * 1. createPrescription() returned the result of $this->model->create() which returns
- *    the insert ID (int), but the controller uses it as `$id` and calls Prescription ID {$id} in logs.
- *    This is actually correct — documented for clarity.
- * 2. update() sets $updateData['status'] = $data['status'] ?? 'dispensed' — but if a Provider
- *    updates without sending 'status', it defaults to 'dispensed', potentially overriding
- *    a 'pending' prescription incorrectly. Fixed to only update status if explicitly provided.
- * 3. updateStatus() in model always updates dosage column even when not provided in update payload,
- *    which could overwrite an encrypted dosage with NULL. Fixed by making dosage update conditional.
- */
 class PrescriptionService
 {
     private Prescription $model;
@@ -25,10 +13,19 @@ class PrescriptionService
         $this->model = new Prescription();
     }
 
-    /**
-     * Create a new prescription.
-     * Returns the new prescription ID.
-     */
+    // ── List prescriptions for a tenant (optional patient filter + pagination) ───
+    public function listPrescriptions(int $tenantId, ?int $patientId = null, int $page = 1, int $perPage = 10): array
+    {
+        return $this->model->getAllByTenant($tenantId, $patientId, $page, $perPage);
+    }
+
+    // ── Get a single prescription by ID (decrypted) ──────────────────────────
+    public function getPrescriptionById(int $id, int $tenantId): ?array
+    {
+        return $this->model->findById($id, $tenantId);
+    }
+
+    // ── Create a new prescription. Returns the new prescription ID ───────────
     public function createPrescription(array $data): int
     {
         return $this->model->create([
@@ -43,10 +40,7 @@ class PrescriptionService
         ]);
     }
 
-    /**
-     * Update a prescription.
-     * FIX #2: Status only updated if explicitly provided in request.
-     */
+    // ── Update a prescription ────────────────────────────────────────────────
     public function update(int $id, int $tenantId, array $data, int $userId, string $userRole): int
     {
         $prescription = $this->model->findById($id, $tenantId);
@@ -59,16 +53,19 @@ class PrescriptionService
         if (isset($data['dosage'])) {
             $updateData['dosage'] = $data['dosage'];
         }
-
         if (isset($data['medicine_name'])) {
             $updateData['medicine_name'] = $data['medicine_name'];
         }
-
-        // FIX #2: Only update status if explicitly provided, not defaulting to 'dispensed'
+        if (isset($data['notes'])) {
+            $updateData['notes'] = $data['notes'];
+        }
+        // Only update status if explicitly provided — validate allowed values
         if (isset($data['status'])) {
+            if (!in_array($data['status'], ['pending', 'dispensed'], true)) {
+                throw new \RuntimeException('Invalid status. Allowed values: pending, dispensed');
+            }
             $updateData['status'] = $data['status'];
         }
-
         // Role-based tracking: Pharmacist records their own ID
         if ($userRole === 'Pharmacist') {
             $updateData['pharmacist_id'] = $userId;

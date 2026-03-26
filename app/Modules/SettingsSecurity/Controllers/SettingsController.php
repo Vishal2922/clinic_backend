@@ -154,6 +154,7 @@ class SettingsController extends Controller
     {
         $cookieName   = env('REFRESH_COOKIE_NAME', 'refresh_token');
         $refreshToken = $request->getCookie($cookieName);
+        $tenantId     = $this->getTenantId();
 
         if (!$refreshToken || !is_string($refreshToken)) {
             Response::error('Refresh token not found. Please log in again.', 401);
@@ -161,7 +162,7 @@ class SettingsController extends Controller
         }
 
         try {
-            $result = $this->settingsService->rotateTokens((string) $refreshToken);
+            $result = $this->settingsService->rotateTokens((string) $refreshToken, $tenantId);
             Response::json(['message' => 'Tokens rotated successfully', 'data' => $result], 200);
         } catch (\RuntimeException $e) {
             Response::error($e->getMessage(), 401);
@@ -240,6 +241,48 @@ class SettingsController extends Controller
             Response::error('Failed to invalidate session.', 500);
         }
     }
+
+    /**
+     * GET /api/settings/theme
+     */
+    public function getTheme(Request $request): void
+    {
+        try {
+            $tenantId = $this->getTenantId();
+            $theme = $this->settingsService->getTheme($tenantId);
+            Response::json(['message' => 'Theme retrieved', 'data' => $theme], 200);
+        } catch (\Exception $e) {
+            app_log('Get theme error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to retrieve theme.', 500);
+        }
+    }
+
+    /**
+     * POST /api/settings/theme
+     * Admin only.
+     */
+    public function updateTheme(Request $request): void
+    {
+        $authUser = $this->getAuthUser();
+        $tenantId = $this->getTenantId();
+        $data = $request->getBody();
+
+        try {
+            $themeData = [
+                'primaryColor' => $data['primaryColor'] ?? '#20b486'
+            ];
+            $result = $this->settingsService->updateTheme($tenantId, $themeData, $authUser['user_id'], [
+                'tenant_id' => $tenantId,
+                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+            ]);
+            Response::json(['message' => 'Theme updated', 'data' => $result], 200);
+        } catch (\Exception $e) {
+            app_log('Update theme error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to update theme.', 500);
+        }
+    }
+
 
     /**
      * GET /api/settings/audit-log

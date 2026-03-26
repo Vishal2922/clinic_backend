@@ -14,6 +14,7 @@ use App\Modules\Patients\Controllers\PatientController;
 use App\Modules\Appointments\Controllers\AppointmentController;
 use App\Modules\Calendar\Controllers\CalendarController;
 use App\Modules\Communication\Controllers\NoteController;
+use App\Modules\Notifications\Controllers\NotificationController;
 use App\Modules\Billing\Controllers\InvoiceController;
 use App\Modules\Staff\Controllers\StaffController;
 use App\Modules\SettingsSecurity\Controllers\SettingsController;
@@ -31,8 +32,8 @@ $providerOnly     = AuthorizeRole::class . ':Provider';
 $providerNurse    = AuthorizeRole::class . ':Provider,Nurse';
 $staff            = AuthorizeRole::class . ':Provider,Pharmacist,Admin';
 $clinicStaff      = AuthorizeRole::class . ':Admin,Provider,Nurse,Receptionist';
-$billingStaff     = AuthorizeRole::class . ':Admin,Provider';
-$billingAll       = AuthorizeRole::class . ':Admin,Provider,Patient';
+$billingStaff     = AuthorizeRole::class . ':Receptionist,Provider';
+$billingAll       = AuthorizeRole::class . ':Receptionist,Patient,Provider';
 $allAuthenticated = AuthorizeRole::class . ':Admin,Provider,Nurse,Patient,Pharmacist,Receptionist';
 
 
@@ -81,12 +82,12 @@ $router->group(['prefix' => '/api/patients', 'middleware' => [$tenant, $auth]], 
 // ═══════════════════════════════════════════════════════════
 // MODULE 4: APPOINTMENT MANAGEMENT
 // ═══════════════════════════════════════════════════════════
-$router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $csrf) {
+$router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $allAuthenticated, $csrf) {
 
-    $router->get('/',               [AppointmentController::class, 'index'], [$clinicStaff]);
-    $router->post('/book',          [AppointmentController::class, 'store'], [$clinicStaff, $csrf]);
+    $router->get('/',               [AppointmentController::class, 'index'], [$allAuthenticated]);
+    $router->post('/book',          [AppointmentController::class, 'store'], [$allAuthenticated, $csrf]);
     $router->patch('/{id}/status',  [AppointmentController::class, 'updateStatus'], [$clinicStaff, $csrf]);
-    $router->delete('/{id}/cancel', [AppointmentController::class, 'destroy'], [$clinicStaff]);
+    $router->delete('/{id}/cancel', [AppointmentController::class, 'destroy'], [$allAuthenticated]);
 });
 
 
@@ -95,17 +96,22 @@ $router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $auth]], function ($router) use ($providerOnly, $staff, $csrf) {
 
-    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]);
-    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);
+    $prescriptionRead = \App\Core\Middleware\AuthorizeRole::class . ':Provider,Pharmacist,Admin,Patient';
+
+    $router->get('/',              [PrescriptionController::class, 'index'],    [$prescriptionRead]);
+    $router->get('/{id}',          [PrescriptionController::class, 'show'],     [$prescriptionRead]);
+    $router->get('/{id}/download', [PrescriptionController::class, 'download'], [$prescriptionRead]);
+    $router->post('/',             [PrescriptionController::class, 'store'],    [$providerOnly, $csrf]); // CREATE (Provider only)
+    $router->put('/{id}',          [PrescriptionController::class, 'update'],   [$staff, $csrf]);        // UPDATE (Provider, Pharmacist, Admin)
 });
 
 
 // ═══════════════════════════════════════════════════════════
 // MODULE 6: DASHBOARD STATISTICS
 // ═══════════════════════════════════════════════════════════
-$router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($staff) {
+$router->group(['prefix' => '/api/dashboard', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated) {
 
-    $router->get('/stats', [DashboardController::class, 'index'], [$staff]);
+    $router->get('/stats', [DashboardController::class, 'index'], [$allAuthenticated]);
 });
 
 
@@ -129,11 +135,36 @@ $router->group(['prefix' => '/api/communication', 'middleware' => [$tenant, $aut
 
 
 // ═══════════════════════════════════════════════════════════
+// MODULE 13: NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════
+$router->group(['prefix' => '/api/notifications', 'middleware' => [$tenant, $auth, $allAuthenticated]], function ($router) use ($csrf) {
+
+    // List notifications (paginated) + unread count
+    $router->get('/',              [NotificationController::class, 'index']);
+
+    // Get unread count only (for badge polling)
+    $router->get('/unread-count',  [NotificationController::class, 'unreadCount']);
+
+    // Send a system broadcast to all active users (Admin only)
+    $router->post('/broadcast',    [NotificationController::class, 'broadcast'],     [$csrf, $adminOnly]);
+
+    // Mark all as read
+    $router->post('/mark-all-read', [NotificationController::class, 'markAllAsRead'], [$csrf]);
+
+    // Mark single as read
+    $router->patch('/{id}/read',   [NotificationController::class, 'markAsRead'],    [$csrf]);
+
+    // Delete single notification
+    $router->delete('/{id}',       [NotificationController::class, 'destroy'],       [$csrf]);
+});
+
+
+// ═══════════════════════════════════════════════════════════
 // MODULE 8: BILLING & PAYMENTS
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/billing', 'middleware' => [$tenant, $auth]], function ($router) use ($billingStaff, $billingAll, $adminOnly, $csrf) {
 
-    $router->get('/summary',                  [InvoiceController::class, 'summary'],      [$billingStaff]);
+    $router->get('/summary',                  [InvoiceController::class, 'summary'],      [$billingAll]);
     $router->get('/invoices',                 [InvoiceController::class, 'index'],        [$billingAll]);
     $router->get('/invoices/{id}',            [InvoiceController::class, 'show'],         [$billingAll]);
     $router->post('/invoices',                [InvoiceController::class, 'store'],        [$billingStaff, $csrf]);
@@ -172,11 +203,19 @@ $router->group(['prefix' => '/api/calendar', 'middleware' => [$tenant, $auth]], 
 // ═══════════════════════════════════════════════════════════
 // MODULE 11: SETTINGS & SECURITY
 // ═══════════════════════════════════════════════════════════
+
+// Public settings (Tenant scoped only, no Auth required)
+$router->group(['prefix' => '/api/settings', 'middleware' => [$tenant]], function ($router) {
+    $router->get('/theme', [SettingsController::class, 'getTheme']);
+});
+
 $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], function ($router) use ($allAuthenticated, $adminOnly, $csrf) {
 
     $router->post('/change-password', [SettingsController::class, 'changePassword'], [$allAuthenticated, $csrf]);
     $router->post('/logout',          [SettingsController::class, 'logout'],         [$allAuthenticated, $csrf]);
     $router->post('/logout-all',      [SettingsController::class, 'logoutAll'],      [$allAuthenticated, $csrf]);
+  
+    $router->post('/theme',           [SettingsController::class, 'updateTheme'],    [$adminOnly, $csrf]);
 
     $router->get('/csrf-token',       [SettingsController::class, 'csrfRegenerate'], [$allAuthenticated]);
 
@@ -185,6 +224,7 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 
     $router->get('/audit-log',         [SettingsController::class, 'auditLog'],     [$adminOnly]);
     $router->get('/audit-log/actions', [SettingsController::class, 'auditActions'], [$adminOnly]);
+
 });
 
 // rotate-tokens uses only $tenant middleware (no $auth) because the access token
@@ -192,4 +232,41 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 // Authentication is instead verified via the refresh token cookie itself.
 $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
 
-$router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $adminOnly]);
+
+$router->get('/api/users/roles',     [UserController::class, 'listRoles'], [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users',           [UserController::class, 'index'],     [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users/providers', [UserController::class, 'providers'], [$tenant, $auth, $allAuthenticated]);
+
+// ═══════════════════════════════════════════════════════════
+// SUPER ADMIN MODULE — Platform Control Plane
+// No X-Tenant-ID required. Uses separate JWT scope.
+// ═══════════════════════════════════════════════════════════
+use App\Modules\SuperAdmin\Controllers\SuperAdminAuthController;
+use App\Modules\SuperAdmin\Controllers\TenantController;
+use App\Modules\SuperAdmin\Controllers\SuperAdminDashboardController;
+use App\Core\Middleware\AuthSuperAdmin;
+
+$superAuth = AuthSuperAdmin::class;
+
+// Public: Super Admin Login
+$router->post('/api/super-admin/auth/login', [SuperAdminAuthController::class, 'login']);
+
+// Protected super admin routes
+$router->group(['prefix' => '/api/super-admin', 'middleware' => [$superAuth]], function ($router) {
+
+    $router->get('/auth/me',            [SuperAdminAuthController::class, 'me']);
+    $router->post('/auth/create-admin', [SuperAdminAuthController::class, 'createAdmin']);
+
+    $router->get('/dashboard',  [SuperAdminDashboardController::class, 'index']);
+    $router->get('/audit-log',  [SuperAdminDashboardController::class, 'auditLog']);
+
+    $router->get('/tenants',                     [TenantController::class, 'index']);
+    $router->post('/tenants',                    [TenantController::class, 'store']);
+    $router->get('/tenants/{code}',              [TenantController::class, 'show']);
+    $router->put('/tenants/{code}',              [TenantController::class, 'update']);
+    $router->post('/tenants/{code}/suspend',     [TenantController::class, 'suspend']);
+    $router->post('/tenants/{code}/reactivate',  [TenantController::class, 'reactivate']);
+    $router->post('/tenants/{code}/change-plan', [TenantController::class, 'changePlan']);
+    $router->get('/tenants/{code}/stats',        [TenantController::class, 'stats']);
+    $router->delete('/tenants/{code}',           [TenantController::class, 'destroy']);
+});

@@ -9,7 +9,8 @@ use App\Modules\ReportsDashboard\Models\DashboardStats;
 
 /**
  * Dashboard Controller: Handles reporting and clinic statistics.
- * Access: Admin, Provider, and Pharmacist.
+ * Access: All authenticated staff (route middleware: $allAuthenticated).
+ * Data is filtered by role — each role only sees stats relevant to them.
  */
 class DashboardController extends Controller 
 {
@@ -17,14 +18,9 @@ class DashboardController extends Controller
 
     public function __construct() 
     {
-        // Dashboard statistics model initialization
         $this->model = new DashboardStats();
     }
 
-    /**
-     * AUDIT LOG HELPER: Clinic levels-la dashboard access-ah track panna.
-     * Global helper function app_log-ai use pannuroam.
-     */
     private function logActivity($userId, $tenantId, $action, $details): void 
     {
         if (function_exists('app_log')) {
@@ -34,51 +30,60 @@ class DashboardController extends Controller
 
     /**
      * GET /api/dashboard/stats
-     * Merged Logic: Leverages Base Controller helpers for Auth and Response.
+     * Returns role-filtered stats so each role sees only what they need.
+     *
+     * Admin:        everything
+     * Provider:     patients, appointments, prescriptions (no billing/staff)
+     * Nurse:        patients, appointments (no billing/prescriptions/staff)
+     * Receptionist: patients, appointments (no billing/prescriptions/staff)
+     * Pharmacist:   prescriptions (no patients/appointments/billing/staff)
      */
     public function index(Request $request): void 
     {
-        /**
-         * 🔥 FIX: Merged Version
-         * Manual getValidatedUser() logic badhula, Base Controller-la irukka
-         * helpers use panni Request object-la irundhu data-vai edukkurhom.
-         */
         $authUser = $this->getAuthUser(); 
         $tenantId = $this->getTenantId(); 
 
-        // 1. Role Authorization Check
-        if (!$this->checkRole(['Admin', 'Provider', 'Pharmacist'])) {
+        if (!$authUser || !$tenantId) {
             Response::json([
                 'status' => 'error',
-                'message' => 'Access Denied: You do not have permission for this resource'
-            ], 403);
+                'message' => 'Unauthorized: Missing session or tenant context'
+            ], 401);
             return;
         }
 
-        try {
-            // 2. Business Logic: Clinic statistics fetch panroam
-            $stats = $this->model->getCounts($tenantId);
+        $role     = $authUser['role_name'] ?? $authUser['role'] ?? '';
 
-            // 3. Audit Logging: HIPAA compliance-kaaga access logs-ah save panrom
+        // Determine owner context for filtering
+        $ownerId = (int) ($authUser['id'] ?? $authUser['user_id'] ?? 0);
+        
+        // Validation: If non-admin doesn't have an ID, we might have a problem, 
+        // but we'll let the model handle ownerId=0 as "no results" rather than crashing.
+
+        try {
+            // Fetch filtered stats from model
+            $allStats = $this->model->getCounts((int)$tenantId, (string)$role, $ownerId);
+
+            // Filter by role (strip disallowed domains)
+            $stats = $this->filterByRole($allStats, $role);
+
             $this->logActivity(
                 $authUser['id'] ?? $authUser['user_id'],
                 $tenantId,
                 'VIEW_DASHBOARD',
-                "Dashboard accessed by role: " . ($authUser['role_name'] ?? 'Unknown')
+                "Dashboard accessed by role: {$role} (owner_id: " . ($ownerId ?: 'none') . ")"
             );
 
-            // 4. Merged Response helper: Success logic format-ah use panrom
             Response::json([
                 'status' => 'success',
                 'message' => 'Dashboard statistics retrieved',
                 'data' => [
-                    'stats' => $stats,
-                    'accessed_by' => $authUser['role_name'] ?? 'Authorized User'
+                    'stats'       => $stats,
+                    'role'        => $role,
+                    'accessed_by' => $role ?: 'Authorized User',
                 ]
             ]);
 
         } catch (\Exception $e) {
-            // 5. Unexpected errors-ah log panni, client-ku safe error message anuppuvom
             if (function_exists('app_log')) {
                 app_log('Dashboard error: ' . $e->getMessage(), 'ERROR');
             }
@@ -88,5 +93,62 @@ class DashboardController extends Controller
                 'message' => 'Failed to load dashboard stats: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Strip stats fields that the given role should not see.
+     */
+    private function filterByRole(array $stats, string $role): array
+    {
+        // Admin sees everything
+        if ($role === 'Admin') {
+            return $stats;
+        }
+
+        // Fields grouped by domain
+        $billingFields = [
+            'total_invoices', 'paid_invoices', 'overdue_invoices',
+            'revenue_this_month', 'total_revenue', 'recent_invoices',
+            'invoice_status_breakdown', 'revenue_last_6_months',
+        ];
+        $prescriptionFields = [
+            'total_prescriptions', 'pending_prescriptions',
+            'dispensed_prescriptions', 'recent_prescriptions',
+        ];
+        $staffFields = ['active_staff'];
+        $patientFields = ['total_patients', 'active_patients'];
+        $appointmentFields = [
+            'upcoming_appointments', 'appointments_today',
+            'active_appointments', 'recent_appointments',
+        ];
+        $patientTrendFields = ['patients_created_last_6_months'];
+
+        // Define what each role CAN see
+        $allowed = match ($role) {
+            'Provider' => array_merge(
+                $patientFields, $patientTrendFields, $appointmentFields, $prescriptionFields
+            ),
+            'Nurse' => array_merge(
+                $patientFields, $patientTrendFields, $appointmentFields
+            ),
+            'Receptionist' => array_merge(
+                $patientFields, $patientTrendFields, $appointmentFields
+            ),
+            'Pharmacist' => $prescriptionFields,
+            'Patient' => array_merge(
+                $appointmentFields, $prescriptionFields, $billingFields
+            ),
+            default => [], // Unknown role: no stats
+        };
+
+        // Keep only allowed keys
+        $filtered = [];
+        foreach ($stats as $key => $value) {
+            if (in_array($key, $allowed, true)) {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
     }
 }

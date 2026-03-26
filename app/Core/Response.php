@@ -38,6 +38,10 @@ class Response
             $payload['data'] = $data;
         }
 
+        if ($code >= 400) {
+            app_log("[Response Error] Code: {$code}, Payload: " . json_encode($data));
+        }
+
         http_response_code($code);
         foreach ($instance->headers as $name => $value) {
             header("$name: $value");
@@ -118,7 +122,11 @@ class Response
      */
     public function setCorsHeaders(): self
     {
-        $this->setHeader('Access-Control-Allow-Origin', '*');
+        // When withCredentials is true, browsers reject Access-Control-Allow-Origin: *
+        // We must echo back the exact requesting Origin instead.
+        $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+        $this->setHeader('Access-Control-Allow-Origin', $origin);
+        $this->setHeader('Access-Control-Allow-Credentials', 'true');
         $this->setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
         $this->setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-CSRF-TOKEN, X-Tenant-ID');
         return $this;

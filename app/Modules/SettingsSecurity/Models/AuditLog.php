@@ -1,23 +1,22 @@
 <?php
 namespace App\Modules\SettingsSecurity\Models;
 
-use App\Core\Database;
 use App\Core\Security\CryptoService;
 
 class AuditLog
 {
-    private Database $db;
+    private function db(): \App\Core\TenantDatabase { return tenant_db(); }
+
     private CryptoService $crypto;
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
         $this->crypto = new CryptoService();
     }
 
     public function record(array $data): int
     {
-        return $this->db->insert(
+        return $this->db()->insert(
             'INSERT INTO audit_log (user_id, tenant_id, action, entity_type, entity_id,
                     ip_address, encrypted_user_agent, encrypted_details)
              VALUES (:user_id, :tenant_id, :action, :entity_type, :entity_id,
@@ -62,13 +61,13 @@ class AuditLog
             $params['date_to'] = $filters['date_to'] . ' 23:59:59';
         }
 
-        $countResult = $this->db->fetch(
+        $countResult = $this->db()->fetch(
             "SELECT COUNT(*) AS total FROM audit_log a WHERE $where",
             $params
         );
         $total = (int) ($countResult['total'] ?? 0);
 
-        $logs = $this->db->fetchAll(
+        $logs = $this->db()->fetchAll(
             "SELECT a.*, u.username
              FROM audit_log a
              LEFT JOIN users u ON a.user_id = u.id
@@ -78,7 +77,6 @@ class AuditLog
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])
         );
 
-        // Decrypt sensitive fields in results
         $logs = array_map(function($log) {
             try {
                 if (!empty($log['encrypted_user_agent'])) {
@@ -108,7 +106,7 @@ class AuditLog
 
     public function getDistinctActions(int $tenantId): array
     {
-        return $this->db->fetchAll(
+        return $this->db()->fetchAll(
             'SELECT DISTINCT action FROM audit_log WHERE tenant_id = :tid ORDER BY action',
             ['tid' => $tenantId]
         );

@@ -1,0 +1,30 @@
+#0 {main}
+  thrown in C:\wamp64\www\clinic_backend\reset_and_seed_tenants.php on line 19
+[17-Mar-2026 15:57:24 UTC] PHP Fatal error:  Uncaught Error: Undefined constant "_DIR_" in C:\wamp64\www\clinic_backend\reset_and_seed_tenants.php:19
+Stack trace:
+#0 {main}
+  thrown in C:\wamp64\www\clinic_backend\reset_and_seed_tenants.php on line 19
+[17-Mar-2026 16:00:51 UTC] PHP Warning:  Constant BASE_PATH already defined in C:\wamp64\www\clinic_backend\public\index.php on line 25
+[17-Mar-2026 16:00:51 UTC] PHP Stack trace:
+[17-Mar-2026 16:00:51 UTC] PHP   1. {main}() C:\wamp64\www\clinic_backend\public\index.php:0
+[17-Mar-2026 16:00:51 UTC] PHP Warning:  Constant BASE_PATH already defined in C:\wamp64\www\clinic_backend\public\index.php on line 25
+[17-Mar-2026 16:00:51 UTC] PHP Stack trace:
+[17-Mar-2026 16:00:51 UTC] PHP   1. {main}() C:\wamp64\www\clinic_backend\public\index.php:0
+[17-Mar-2026 16:01:12 UTC] Database connection failed: SQLSTATE[HY000] [2002] A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond
+[17-Mar-2026 16:01:31 UTC] PHP Warning:  Constant BASE_PATH already defined in C:\wamp64\www\clinic_backend\public\index.php on line 25
+[17-Mar-2026 16:01:31 UTC] PHP Stack trace:
+[17-Mar-2026 16:01:31 UTC] PHP   1. {main}() C:\wamp64\www\clinic_backend\public\index.php:0
+[17-Mar-2026 16:01:52 UTC] Database connection failed: SQLSTATE[HY000] [2002] A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond
+[17-Mar-2026 16:08:20 UTC] PHP Warning:  Constant BASE_PATH already defined in C:\wamp64\www\clinic_backend\public\index.php on line 36
+[17-Mar-2026 16:08:20 UTC] PHP Stack trace:
+[17-Mar-2026 16:08:20 UTC] PHP   1. {main}() C:\wamp64\www\clinic_backend\public\index.php:0
+[17-Mar-2026 16:08:41 UTC] Database connection failed: SQLSTATE[HY000] [2002] A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond
+[17-Mar-2026 16:17:03 UTC] Database connection failed: SQLSTATE[HY000] [2002] A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond
+[18-Mar-2026 04:39:27 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:52:00 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:52:52 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:52:53 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:52:53 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:55:55 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:57:03 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'
+[18-Mar-2026 04:57:15 UTC] Database connection failed: SQLSTATE[HY000] [1049] Unknown database 'clinic_db'

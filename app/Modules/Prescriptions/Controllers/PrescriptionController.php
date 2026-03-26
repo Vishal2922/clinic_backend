@@ -5,39 +5,142 @@ namespace App\Modules\Prescriptions\Controllers;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\NotificationHelper;
 use App\Core\Security\CryptoService;
 use App\Modules\Prescriptions\Services\PrescriptionService;
 
-class PrescriptionController extends Controller 
+class PrescriptionController extends Controller
 {
     private PrescriptionService $service;
     private CryptoService $crypto;
 
-    public function __construct() 
+    public function __construct()
     {
-        // Services-ah initialize panroam
         $this->service = new PrescriptionService();
         $this->crypto  = new CryptoService();
     }
 
-    /**
-     * AUDIT LOG HELPER: Security compliance-kaaga ella sensitive actions-aiyum log pannum.
-     */
-    private function logActivity($userId, $tenantId, $action, $details): void 
+    private function logActivity($userId, $tenantId, $action, $details): void
     {
-        // Common helper function use panni audit trial maintain panroam
         if (function_exists('app_log')) {
             app_log("[AUDIT] user_id={$userId} tenant_id={$tenantId} action={$action} details={$details}");
         }
     }
 
     /**
-     * POST /api/prescriptions
-     * Role: Provider mattum thaan prescription create panna mudiyum.
+     * GET /api/prescriptions
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Patient: forced to own prescriptions only
+     * Staff: optional ?patient_id=123 to filter by patient
      */
-    public function store(Request $request): void 
+    public function index(Request $request): void
     {
-        // 1. AUTH & ROLE CHECK
+        $tenantId  = $this->getTenantId();
+        $user      = $this->getAuthUser();
+        $userRole  = $user['role_name'] ?? '';
+
+        if ($userRole === 'Patient') {
+            $patientId = $user['patient_id'] ?? null;
+            if (!$patientId) {
+                Response::error('Account not linked to patient record.', 403);
+            }
+        } else {
+            $patientId = $request->getQueryParam('patient_id')
+                ? (int) $request->getQueryParam('patient_id')
+                : null;
+        }
+
+        $page    = (int) $request->getQueryParam('page', 1);
+        $perPage = (int) $request->getQueryParam('per_page', 10);
+
+        try {
+            $prescriptions = $this->service->listPrescriptions($tenantId, $patientId, $page, $perPage);
+
+            Response::json([
+                'message' => 'Prescriptions retrieved',
+                'data'    => $prescriptions,
+            ], 200);
+        } catch (\Exception $e) {
+            Response::json([
+                'message' => 'Failed to fetch prescriptions: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/prescriptions/{id}
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Patient: ownership enforced
+     */
+    public function show(Request $request, string $id): void
+    {
+        $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
+
+        try {
+            $prescription = $this->service->getPrescriptionById((int) $id, $tenantId);
+            if (!$prescription) {
+                Response::error('Prescription not found.', 404);
+            }
+
+            if ($userRole === 'Patient' && (int) ($prescription['patient_id'] ?? 0) !== (int) ($user['patient_id'] ?? 0)) {
+                Response::error('Access denied.', 403);
+            }
+
+            Response::json(['message' => 'Prescription retrieved', 'data' => $prescription], 200);
+        } catch (\Exception $e) {
+            Response::error('Failed to retrieve prescription.', 500);
+        }
+    }
+
+    /**
+     * GET /api/prescriptions/{id}/download
+     * Role: Provider, Pharmacist, Admin, Patient
+     * Returns structured data for frontend PDF generation.
+     * Patient: ownership enforced
+     */
+    public function download(Request $request, string $id): void
+    {
+        $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
+
+        try {
+            $prescription = $this->service->getPrescriptionById((int) $id, $tenantId);
+            if (!$prescription) {
+                Response::error('Prescription not found.', 404);
+            }
+
+            if ($userRole === 'Patient' && (int) ($prescription['patient_id'] ?? 0) !== (int) ($user['patient_id'] ?? 0)) {
+                Response::error('Access denied.', 403);
+            }
+
+            Response::json([
+                'message' => 'Prescription download data',
+                'data'    => [
+                    'id'            => $prescription['id'],
+                    'patient_name'  => $prescription['patient_name'] ?? '',
+                    'provider_name' => $prescription['provider_name'] ?? '',
+                    'medicine_name' => $prescription['medicine_name_plain'] ?? '',
+                    'dosage'        => $prescription['dosage_plain'] ?? '',
+                    'duration_days' => $prescription['duration_days'] ?? 7,
+                    'notes'         => $prescription['notes_plain'] ?? '',
+                    'status'        => $prescription['status'] ?? '',
+                    'created_at'    => $prescription['created_at'] ?? '',
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            Response::error('Failed to generate prescription download.', 500);
+        }
+    }
+
+    /**
+     * POST /api/prescriptions
+     * Role: Provider only  ($providerOnly middleware)
+     */
+    public function store(Request $request): void
+    {
         $authUser = $this->getAuthUser();
         $tenantId = $this->getTenantId();
 
@@ -48,11 +151,10 @@ class PrescriptionController extends Controller
 
         $data = $request->getBody();
 
-        // 2. VALIDATION LOGIC
         $errors = $this->validate($data, [
             'patient_id'    => 'required|numeric',
             'medicine_name' => 'required|min:3',
-            'dosage'        => 'required'
+            'dosage'        => 'required',
         ]);
 
         if (!empty($errors)) {
@@ -60,25 +162,52 @@ class PrescriptionController extends Controller
             return;
         }
 
-        // 3. AES ENCRYPTION: Sensitive fields-ah database-ku poradhukku munnadi encrypt panroam
-        // CryptoService openSSL aes-256-cbc logic-ah handle pannum
+        // AES-256 encrypt sensitive fields before DB storage
         $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
         $data['dosage']        = $this->crypto->encrypt($data['dosage']);
 
-        // 4. INJECT METADATA
+        if (!empty($data['notes'])) {
+            $data['notes'] = $this->crypto->encrypt($data['notes']);
+        }
+
         $data['tenant_id']   = $tenantId;
         $data['provider_id'] = $authUser['id'] ?? $authUser['user_id'];
 
         try {
             $id = $this->service->createPrescription($data);
 
-            // Audit log create panroam
             $this->logActivity($data['provider_id'], $tenantId, 'CREATE_PRESCRIPTION', "Prescription ID {$id} created.");
 
+            // Fetch the full decrypted prescription so the frontend can display it immediately
+            $prescription = $this->service->getPrescriptionById($id, $tenantId);
+
+            // Notify all Pharmacists about the new prescription
+            NotificationHelper::notifyRole(
+                $tenantId,
+                'Pharmacist',
+                'prescription',
+                '💊 New Prescription Awaiting Dispense',
+                "Prescription #{$id} for Patient #{$data['patient_id']} — please review and dispense",
+                'prescription',
+                $id
+            );
+            
+            // Notify the Patient about the new prescription
+            NotificationHelper::notifyPatient(
+                $tenantId,
+                (int) $data['patient_id'],
+                'prescription',
+                '💊 New Prescription Issued',
+                "A new prescription has been issued for you. Please check your portal for details.",
+                'prescription',
+                $id
+            );
+
             Response::json([
-                'status' => 'success', 
-                'id' => $id, 
-                'message' => 'Prescription encrypted and saved successfully'
+                'status'       => 'success',
+                'id'           => $id,
+                'prescription' => $prescription,
+                'message'      => 'Prescription created successfully',
             ], 201);
         } catch (\Exception $e) {
             Response::json(['status' => 'error', 'message' => 'Failed to create prescription: ' . $e->getMessage()], 500);
@@ -87,15 +216,14 @@ class PrescriptionController extends Controller
 
     /**
      * PUT /api/prescriptions/{id}
-     * Role: Provider or Pharmacist can update.
+     * Role: Provider, Pharmacist, Admin  ($staff middleware)
      */
-    public function update(Request $request, $id): void 
+    public function update(Request $request, $id): void
     {
         $authUser = $this->getAuthUser();
         $tenantId = $this->getTenantId();
-        
-        // 1. AUTH & ROLE CHECK
-        if (!$this->checkRole(['Provider', 'Pharmacist'])) {
+
+        if (!$this->checkRole(['Provider', 'Pharmacist', 'Admin'])) {
             Response::json(['status' => 'error', 'message' => 'Access Denied: Unauthorized role'], 403);
             return;
         }
@@ -107,20 +235,20 @@ class PrescriptionController extends Controller
 
         $data = $request->getBody();
 
-        // 2. ENCRYPT UPDATED FIELDS
-        // Update-la sensitive fields vandha adhai encrypt panni service-ku anupuvom
+        // Encrypt updated sensitive fields
         if (!empty($data['dosage'])) {
             $data['dosage'] = $this->crypto->encrypt($data['dosage']);
         }
         if (!empty($data['medicine_name'])) {
             $data['medicine_name'] = $this->crypto->encrypt($data['medicine_name']);
         }
+        if (!empty($data['notes'])) {
+            $data['notes'] = $this->crypto->encrypt($data['notes']);
+        }
 
         try {
-            // 3. SERVICE CALL
-            // Service level update logic with Role-based constraints
             $this->service->update(
-                $id,
+                (int) $id,
                 $tenantId,
                 $data,
                 $authUser['id'] ?? $authUser['user_id'],
@@ -128,6 +256,22 @@ class PrescriptionController extends Controller
             );
 
             $this->logActivity($authUser['id'] ?? $authUser['user_id'], $tenantId, 'UPDATE_PRESCRIPTION', "Prescription ID {$id} updated.");
+
+            // If status changed to dispensed, notify the original provider
+            if (isset($data['status']) && $data['status'] === 'dispensed') {
+                $rx = $this->service->getPrescriptionById((int) $id, $tenantId);
+                if ($rx && !empty($rx['provider_id'])) {
+                    NotificationHelper::notifyUser(
+                        $tenantId,
+                        (int) $rx['provider_id'],
+                        'prescription',
+                        '✅ Prescription Dispensed',
+                        "Prescription #{$id} has been dispensed by pharmacist",
+                        'prescription',
+                        (int) $id
+                    );
+                }
+            }
 
             Response::json(['status' => 'success', 'message' => 'Prescription updated successfully']);
         } catch (\Exception $e) {

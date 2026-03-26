@@ -2,7 +2,6 @@
 
 namespace App\Modules\SettingsSecurity\Services;
 
-use App\Core\Database;
 use App\Core\Security\JwtService;
 use App\Core\Security\TokenService;
 use App\Core\Security\CryptoService;
@@ -11,18 +10,10 @@ use App\Modules\SettingsSecurity\Models\UserSession;
 use App\Modules\SettingsSecurity\Models\AuditLog;
 use App\Modules\UsersRoles\Models\Permission;
 
-/**
- * SettingsService
- * Handles user account settings and security operations:
- *  - Change password
- *  - Logout / Invalidate session
- *  - Token rotation
- *  - CSRF regeneration
- *  - Audit logging
- */
 class SettingsService
 {
-    private Database $db;
+    private function db(): \App\Core\TenantDatabase { return tenant_db(); }
+
     private JwtService $jwt;
     private TokenService $tokenService;
     private CryptoService $crypto;
@@ -32,7 +23,6 @@ class SettingsService
 
     public function __construct()
     {
-        $this->db              = Database::getInstance();
         $this->jwt             = new JwtService();
         $this->tokenService    = new TokenService();
         $this->crypto          = new CryptoService();
@@ -41,13 +31,9 @@ class SettingsService
         $this->permissionModel = new Permission();
     }
 
-    /**
-     * Change password for a user.
-     * Validates current password, enforces policy, revokes all tokens.
-     */
     public function changePassword(int $userId, string $currentPassword, string $newPassword, array $requestMeta = []): void
     {
-        $user = $this->db->fetch(
+        $user = $this->db()->fetch(
             'SELECT id, password_hash FROM users WHERE id = :id AND deleted_at IS NULL',
             ['id' => $userId]
         );
@@ -71,18 +57,13 @@ class SettingsService
             'threads'     => 3,
         ]);
 
-        $this->db->execute(
+        $this->db()->execute(
             'UPDATE users SET password_hash = :hash, updated_at = NOW() WHERE id = :id',
             ['hash' => $newHash, 'id' => $userId]
         );
 
-        // Revoke all refresh tokens (force re-login on all devices)
         $this->tokenService->revokeAllUserTokens($userId);
-
-        // Invalidate all sessions
         $this->sessionModel->invalidateAllForUser($userId);
-
-        // Destroy CSRF
         CsrfGuard::destroy();
 
         $this->logAudit($userId, $requestMeta['tenant_id'] ?? null, 'PASSWORD_CHANGED', 'user', $userId, $requestMeta);
@@ -90,9 +71,6 @@ class SettingsService
         app_log("Password changed for user ID: {$userId}");
     }
 
-    /**
-     * Logout: revoke specific refresh token, clear cookie, destroy CSRF, invalidate session.
-     */
     public function logout(?string $rawRefreshToken, int $userId, array $requestMeta = []): void
     {
         if ($rawRefreshToken) {
@@ -102,11 +80,7 @@ class SettingsService
         $this->tokenService->clearRefreshTokenCookie();
         CsrfGuard::destroy();
 
-        // Invalidate current PHP session
         if (session_status() === PHP_SESSION_ACTIVE) {
-            // FIX: invalidate(0, userId) always matched 0 rows because id=0 never exists.
-            // Use invalidateAllForUser() to properly mark all DB sessions as inactive,
-            // then regenerate the PHP session ID to prevent session fixation.
             $this->sessionModel->invalidateAllForUser($userId);
             session_regenerate_id(true);
         }
@@ -116,9 +90,6 @@ class SettingsService
         app_log("User logged out (ID: {$userId})");
     }
 
-    /**
-     * Logout from all devices: revoke ALL tokens, invalidate all sessions.
-     */
     public function logoutAll(int $userId, array $requestMeta = []): void
     {
         $this->tokenService->revokeAllUserTokens($userId);
@@ -131,31 +102,19 @@ class SettingsService
         app_log("User logged out from all devices (ID: {$userId})");
     }
 
-    /**
-     * Rotate tokens: generate new access + refresh tokens, regenerate CSRF.
-     *
-     * FIX: Removed $userId and $tenantId parameters.
-     * Previously the controller passed these from getAuthUser(), which required
-     * AuthJWT to have run — but AuthJWT requires a valid access token, creating
-     * a circular dependency (you need a valid token to get a new token).
-     * Now userId and tenantId are extracted from the validated refresh token
-     * DB record directly, exactly like AuthService::refreshAccessToken() does.
-     */
-    public function rotateTokens(string $rawRefreshToken): array
+    public function rotateTokens(string $rawRefreshToken, int $tenantId): array
     {
-        // Validate the refresh token — this IS the authentication for this endpoint
         $tokenRecord = $this->tokenService->validateRefreshToken($rawRefreshToken);
         if (!$tokenRecord) {
             throw new \RuntimeException('Invalid or expired refresh token. Please log in again.');
         }
 
-        // FIX: Get userId and tenantId from the token record, not from JWT auth user
-        $userId   = (int) $tokenRecord['user_id'];
-        $tenantId = (int) $tokenRecord['tenant_id'];
+        $userId = (int) $tokenRecord['user_id'];
+        // Use the tenant_id from ResolveTenant middleware (passed by the controller),
+        // NOT from the token record — the refresh_tokens table does not store tenant_id.
 
-        // Get fresh user data
-        $user = $this->db->fetch(
-            'SELECT u.*, r.role_name
+        $user = $this->db()->fetch(
+            'SELECT u.*, r.name AS role_name
              FROM users u
              JOIN roles r ON u.role_id = r.id
              WHERE u.id = :id AND u.deleted_at IS NULL',
@@ -167,17 +126,14 @@ class SettingsService
             throw new \RuntimeException('User not found or inactive');
         }
 
-        // Rotate refresh token
         $rotationResult = $this->tokenService->rotateRefreshToken($rawRefreshToken, $userId, $tenantId);
         if (!$rotationResult) {
             throw new \RuntimeException('Token rotation failed');
         }
 
-        // Get fresh permissions
         $permissions    = $this->permissionModel->getByRoleId((int) $user['role_id']);
         $permissionKeys = array_column($permissions, 'permission_key');
 
-        // Generate new access token
         $accessToken = $this->jwt->generateAccessToken([
             'sub'         => $userId,
             'tenant_id'   => $tenantId,
@@ -187,12 +143,11 @@ class SettingsService
             'permissions' => $permissionKeys,
         ]);
 
-        // Set new refresh token cookie
         $this->tokenService->setRefreshTokenCookie($rotationResult['refresh_token']);
 
         $this->logAudit($userId, $tenantId, 'TOKEN_ROTATED', 'user', $userId, []);
 
-        app_log("Tokens rotated for user ID: {$userId}");
+        app_log("Tokens rotated for user ID: {$userId} in tenant {$tenantId}");
 
         return [
             'access_token' => $accessToken,
@@ -201,9 +156,7 @@ class SettingsService
             'csrf_token'   => $rotationResult['csrf_token'],
         ];
     }
-    /**
-     * Regenerate CSRF token.
-     */
+
     public function regenerateCsrf(): array
     {
         $token = CsrfGuard::regenerate();
@@ -214,17 +167,41 @@ class SettingsService
         ];
     }
 
-    /**
-     * Get active sessions for a user.
-     */
     public function getActiveSessions(int $userId): array
     {
         return $this->sessionModel->getActiveSessions($userId);
     }
 
-    /**
-     * Invalidate a specific session.
-     */
+    public function getTheme(int $tenantId): array
+    {
+        $setting = $this->db()->fetch(
+            'SELECT setting_value FROM tenant_settings WHERE tenant_id = :tid AND setting_key = :key',
+            ['tid' => $tenantId, 'key' => 'theme']
+        );
+        if ($setting && $setting['setting_value']) {
+            return json_decode($setting['setting_value'], true);
+        }
+        return ['primaryColor' => '#20b486'];
+    }
+
+    public function updateTheme(int $tenantId, array $themeData, int $userId, array $requestMeta = []): array
+    {
+        $jsonValue = json_encode($themeData);
+        $this->db()->execute(
+            'INSERT INTO tenant_settings (tenant_id, setting_key, setting_value, created_at, updated_at)
+             VALUES (:tid, :key, :val, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE setting_value = :val2, updated_at = NOW()',
+            [
+                'tid' => $tenantId,
+                'key' => 'theme',
+                'val' => $jsonValue,
+                'val2' => $jsonValue
+            ]
+        );
+        $this->logAudit($userId, $tenantId, 'THEME_UPDATED', 'tenant_settings', null, $requestMeta);
+        return $themeData;
+    }
+
     public function invalidateSession(int $sessionId, int $userId, array $requestMeta = []): bool
     {
         $result = $this->sessionModel->invalidate($sessionId, $userId);
@@ -243,25 +220,16 @@ class SettingsService
         return $result;
     }
 
-    /**
-     * Get audit log for a tenant (Admin only).
-     */
     public function getAuditLog(int $tenantId, int $page = 1, int $perPage = 50, array $filters = []): array
     {
         return $this->auditModel->getByTenant($tenantId, $page, $perPage, $filters);
     }
 
-    /**
-     * Get distinct audit actions for filter UI.
-     */
     public function getAuditActions(int $tenantId): array
     {
         return $this->auditModel->getDistinctActions($tenantId);
     }
 
-    /**
-     * Internal helper to log audit events.
-     */
     private function logAudit(
         ?int $userId,
         ?int $tenantId,

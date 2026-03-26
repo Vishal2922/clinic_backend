@@ -11,13 +11,7 @@ class CsrfGuard
     public function handle(Request $request, Response $response, array $params = []): void
     {
         $method = $request->getMethod();
-
-        // Determine if this instance enforces CSRF on ALL methods or only write methods.
-        // Pass 'all' as param to enforce on GET too:  CsrfGuard::class . ':all'
-        $enforceOnGet = in_array('all', $params, true);
-
-        // Skip CSRF check for safe methods UNLESS enforceOnGet is requested
-        if (!$enforceOnGet && in_array($method, ['GET', 'HEAD', 'OPTIONS'])) {
+        if (in_array($method, ['GET'])) {
             return;
         }
 

@@ -4,18 +4,6 @@ namespace App\Modules\Patients\Services;
 
 use App\Modules\Patients\Models\Patient;
 
-/**
- * PatientService: Fixed Version.
- * Bugs Fixed:
- * 1. Used Laravel facades (DB::transaction, Log::info, auth()->id()) — replaced with
- *    custom framework equivalents (app_log, manual DB calls via model).
- * 2. Patient::findOrFail() — Eloquent method doesn't exist; replaced with findById() + manual check.
- * 3. $patient->appointments()->where()->exists() — Eloquent relation doesn't exist in custom model.
- *    Replaced with a model method call.
- * 4. Patient::create(), $patient->fill(), $patient->isDirty(), $patient->save() — all Eloquent.
- *    Replaced with custom model insert/update methods.
- * 5. Patient::when()->latest()->paginate() — Eloquent. Replaced with custom model search.
- */
 class PatientService
 {
     private Patient $model;
@@ -25,40 +13,37 @@ class PatientService
         $this->model = new Patient();
     }
 
-    /**
-     * List patients for a tenant with pagination.
-     */
     public function listPatients(int $tenantId, int $page = 1, int $perPage = 10): array
     {
         return $this->model->getAllByTenant($tenantId, $page, $perPage);
     }
 
-    /**
-     * Get a single patient by ID within a tenant.
-     */
     public function getPatient(int $id, int $tenantId): ?array
     {
         return $this->model->findById($id, $tenantId);
     }
 
-    /**
-     * Create a patient.
-     */
     public function createPatient(array $data, int $tenantId): array
     {
-        // Normalize phone number
-        $data['phone'] = preg_replace('/\D/', '', $data['phone']);
+        $userId = $data['user_id'] ?? null;
+        unset($data['user_id']); // Don't pass to Patient model create
+
+        $data['phone']     = preg_replace('/\D/', '', $data['phone']);
         $data['tenant_id'] = $tenantId;
 
         $id = $this->model->create($data);
         app_log("New Patient Registered: ID {$id}");
 
+        // ── Link to User Account ─────────────────────────────────────────────
+        if ($userId) {
+            $authModel = new \App\Modules\AuthTenant\Models\AuthModel();
+            $authModel->associatePatient((int)$userId, (int)$id);
+            app_log("Patient ID {$id} linked to User ID {$userId}");
+        }
+
         return $this->model->findById($id, $tenantId);
     }
 
-    /**
-     * Update a patient record.
-     */
     public function updatePatient(int $id, array $data, int $tenantId): array
     {
         $patient = $this->model->findById($id, $tenantId);
@@ -72,9 +57,6 @@ class PatientService
         return $this->model->findById($id, $tenantId);
     }
 
-    /**
-     * Soft-delete a patient after checking for active appointments.
-     */
     public function deletePatient(int $id, int $tenantId): bool
     {
         $patient = $this->model->findById($id, $tenantId);
@@ -82,7 +64,6 @@ class PatientService
             throw new \RuntimeException('Patient not found');
         }
 
-        // Check for active scheduled appointments before deletion
         if ($this->model->hasScheduledAppointments($id, $tenantId)) {
             throw new \RuntimeException('This patient has scheduled appointments. Cannot delete.');
         }
@@ -91,10 +72,16 @@ class PatientService
     }
 
     /**
-     * Search patients by name or phone.
+     * FIX: now accepts gender and status params and passes them to the model
      */
-    public function searchPatients(?string $query, int $tenantId, int $page = 1, int $perPage = 15): array
-    {
-        return $this->model->search($query, $tenantId, $page, $perPage);
+    public function searchPatients(
+        ?string $query,
+        ?string $gender,
+        ?string $status,
+        int $tenantId,
+        int $page = 1,
+        int $perPage = 10
+    ): array {
+        return $this->model->search($query, $gender, $status, $tenantId, $page, $perPage);
     }
 }
