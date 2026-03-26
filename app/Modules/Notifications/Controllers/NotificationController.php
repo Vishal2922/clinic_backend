@@ -185,4 +185,54 @@ class NotificationController extends Controller
             Response::error('Failed to get unread count.', 500);
         }
     }
+
+    /**
+     * POST /api/notifications/broadcast
+     * Sends a system broadcast to all active users in the tenant.
+     * Only Admin role can use this.
+     */
+    public function broadcast(Request $request): void
+    {
+        $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userId   = (int) ($user['user_id'] ?? 0);
+
+        if (!$userId || strtolower($user['role_name'] ?? '') !== 'admin') {
+            Response::error('Unauthorised. Only Admin can send broadcasts.', 403);
+            return;
+        }
+
+        $data = $request->getBody();
+        $title = trim($data['title'] ?? '');
+        $message = trim($data['message'] ?? '');
+
+        if (!$title || !$message) {
+            Response::error('Validation failed: title and message are required.', 400);
+            return;
+        }
+
+        try {
+            $userModel = new \App\Modules\UsersRoles\Models\User();
+            $activeUserIds = $userModel->getActiveUserIds($tenantId);
+
+            if (empty($activeUserIds)) {
+                Response::error('No active users found to broadcast to.', 400);
+                return;
+            }
+
+            $service = new \App\Modules\Notifications\Services\NotificationService();
+            $service->notifyMany(
+                $tenantId,
+                $activeUserIds,
+                'system',
+                $title,
+                $message
+            );
+
+            Response::json(['message' => 'Broadcast sent successfully to ' . count($activeUserIds) . ' users.'], 200);
+        } catch (\Exception $e) {
+            app_log('Broadcast error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to send broadcast.', 500);
+        }
+    }
 }
