@@ -209,6 +209,13 @@ foreach ($clinics as $c) {
                 'password'   => $hashedPass,
                 'enc_name'   => $encName,
             ]);
+            $userId = $pdo->lastInsertId();
+
+            $stmtStaff = $pdo->prepare("INSERT INTO staff (user_id, tenant_id, status, created_at, updated_at) VALUES (:uid, :tid, 'active', NOW(), NOW())");
+            $stmtStaff->execute([
+                'uid' => $userId,
+                'tid' => $tenantId,
+            ]);
 
             $createdUsers[] = ['username' => $username, 'role' => $staff['role']];
         }
