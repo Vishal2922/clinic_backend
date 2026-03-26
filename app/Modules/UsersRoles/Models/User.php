@@ -37,6 +37,14 @@ class User
         return $user;
     }
 
+    public function getActiveUserIds(int $tenantId): array
+    {
+        $users = $this->db()->fetchAll(
+            "SELECT id FROM users WHERE status = 'active' AND deleted_at IS NULL"
+        );
+        return array_column($users, 'id');
+    }
+
     public function getAllByTenant(int $tenantId, int $page = 1, int $perPage = 20, array $filters = []): array
     {
         $offset = ($page - 1) * $perPage;
