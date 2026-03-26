@@ -141,6 +141,9 @@ $router->group(['prefix' => '/api/notifications', 'middleware' => [$tenant, $aut
     // Get unread count only (for badge polling)
     $router->get('/unread-count',  [NotificationController::class, 'unreadCount']);
 
+    // Send a system broadcast to all active users (Admin only)
+    $router->post('/broadcast',    [NotificationController::class, 'broadcast'],     [$csrf, $adminOnly]);
+
     // Mark all as read
     $router->post('/mark-all-read', [NotificationController::class, 'markAllAsRead'], [$csrf]);
 
