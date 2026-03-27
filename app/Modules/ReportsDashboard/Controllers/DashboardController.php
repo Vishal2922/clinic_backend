@@ -42,20 +42,35 @@ class DashboardController extends Controller
     {
         $authUser = $this->getAuthUser(); 
         $tenantId = $this->getTenantId(); 
-        $role     = $authUser['role_name'] ?? '';
+
+        if (!$authUser || !$tenantId) {
+            Response::json([
+                'status' => 'error',
+                'message' => 'Unauthorized: Missing session or tenant context'
+            ], 401);
+            return;
+        }
+
+        $role     = $authUser['role_name'] ?? $authUser['role'] ?? '';
+
+        // Determine owner context for filtering
+        $ownerId = (int) ($authUser['id'] ?? $authUser['user_id'] ?? 0);
+        
+        // Validation: If non-admin doesn't have an ID, we might have a problem, 
+        // but we'll let the model handle ownerId=0 as "no results" rather than crashing.
 
         try {
-            // Fetch full stats from model
-            $allStats = $this->model->getCounts($tenantId);
+            // Fetch filtered stats from model
+            $allStats = $this->model->getCounts((int)$tenantId, (string)$role, $ownerId);
 
-            // Filter by role
+            // Filter by role (strip disallowed domains)
             $stats = $this->filterByRole($allStats, $role);
 
             $this->logActivity(
                 $authUser['id'] ?? $authUser['user_id'],
                 $tenantId,
                 'VIEW_DASHBOARD',
-                "Dashboard accessed by role: {$role}"
+                "Dashboard accessed by role: {$role} (owner_id: " . ($ownerId ?: 'none') . ")"
             );
 
             Response::json([
@@ -120,6 +135,9 @@ class DashboardController extends Controller
                 $patientFields, $patientTrendFields, $appointmentFields
             ),
             'Pharmacist' => $prescriptionFields,
+            'Patient' => array_merge(
+                $appointmentFields, $prescriptionFields, $billingFields
+            ),
             default => [], // Unknown role: no stats
         };
 

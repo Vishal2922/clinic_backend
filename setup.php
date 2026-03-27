@@ -2,8 +2,7 @@
 /**
  * setup.php — CENTRALIZED PROJECT SEED SCRIPT
  * =====================================================
- * This script consolidates: reset_and_seed_tenants.php, 
- * seed_all_staff.php, seedsuper.php, and seedsuperreset.php
+ * This script consolidates all database resetting and seeding logic.
  *
  * Usage:
  *   Full Reset & Seed:        php setup.php
@@ -156,11 +155,11 @@ echo "\n";
 
 // STEP 2 - Clear Existing Tenants
 echo "--- Clearing Existing Tenants ---\n";
-$existing = $pdo->query("SELECT tenant_code, db_name, db_username FROM tenants")->fetchAll(PDO::FETCH_ASSOC);
-if (empty($existing)) {
+$existingTenants = $pdo->query("SELECT tenant_code, db_name, db_username FROM tenants")->fetchAll(PDO::FETCH_ASSOC);
+if (empty($existingTenants)) {
     echo "  No existing tenants - fresh install.\n";
 } else {
-    foreach ($existing as $t) {
+    foreach ($existingTenants as $t) {
         try {
             $pdo->exec("DROP DATABASE IF EXISTS {$t['db_name']}");
             $pdo->exec("DROP USER IF EXISTS '{$t['db_username']}'@'%'");
@@ -178,7 +177,9 @@ echo "  [OK] Master DB cleared.\n\n";
 $schemaStmts = parseSqlFile($SCHEMA_FILE);
 $seedStmts   = parseSqlFile($SEEDS_FILE);
 
-// Tenants Definition
+// STEP 3 - Provision 5 Clinics
+echo "--- Provisioning tenants, staff, and patients ---\n";
+
 $clinics = [
     ['code' => 'apollo', 'name' => 'Apollo Hospitals',     'email' => 'admin@apollo.com', 'plan' => 'enterprise',   'pass' => 'Apollo@1234'],
     ['code' => 'fortis', 'name' => 'Fortis Healthcare',    'email' => 'admin@fortis.com', 'plan' => 'standard',     'pass' => 'Fortis@1234'],
@@ -186,321 +187,150 @@ $clinics = [
     ['code' => 'care',   'name' => 'Care Hospitals',       'email' => 'admin@care.com',   'plan' => 'basic',        'pass' => 'Care@1234'],
     ['code' => 'kims',   'name' => 'KIMS Hospitals',       'email' => 'admin@kims.com',   'plan' => 'basic',        'pass' => 'Kims@1234'],
 ];
-$planDays  = ['basic' => 30, 'standard' => 90, 'professional' => 180, 'enterprise' => 365];
-$planUsers = ['basic' => 10, 'standard' => 25, 'professional' => 50,  'enterprise' => 200];
 
-// Staff Template definition (combining standard admin + extra details for others)
-$STAFF_TEMPLATES = [
-    'Admin' => [
-        'role_id'     => 1,
-        'name_suffix' => 'Admin',
-        'username'    => 'admin',
-        'email'       => 'admin',
-        'department'  => 'Administration',
-        'specialization' => '',
-        'license'     => '',
-    ],
-    'Provider' => [
-        'role_id'     => 2,
-        'name_suffix' => 'Dr. Sharma',
-        'username'    => 'doctor',
-        'email'       => 'doctor',
-        'department'  => 'General Medicine',
-        'specialization' => 'Internal Medicine',
-        'license'     => 'MCI-2024-00123',
-    ],
-    'Nurse' => [
-        'role_id'     => 3,
-        'name_suffix' => 'Nurse Priya',
-        'username'    => 'nurse',
-        'email'       => 'nurse',
-        'department'  => 'Nursing',
-        'specialization' => 'Critical Care',
-        'license'     => 'NMC-2024-04567',
-    ],
-    'Receptionist' => [
-        'role_id'     => 4,
-        'name_suffix' => 'Anita (Reception)',
-        'username'    => 'reception',
-        'email'       => 'reception',
-        'department'  => 'Front Desk',
-        'specialization' => 'Patient Coordination',
-        'license'     => '',
-    ],
-    'Pharmacist' => [
-        'role_id'     => 5,
-        'name_suffix' => 'Pharmacist Raj',
-        'username'    => 'pharmacist',
-        'email'       => 'pharmacist',
-        'department'  => 'Pharmacy',
-        'specialization' => 'Clinical Pharmacy',
-        'license'     => 'PCI-2024-07890',
-    ],
+$staffTemplate = [
+    ['role_id' => 1, 'username' => 'admin',      'suffix' => 'Admin',        'role' => 'Admin'],
+    ['role_id' => 2, 'username' => 'doctor',     'suffix' => 'Dr. Sharma',   'role' => 'Provider'],
+    ['role_id' => 3, 'username' => 'nurse',      'suffix' => 'Nurse Priya',  'role' => 'Nurse'],
+    ['role_id' => 4, 'username' => 'reception',  'suffix' => 'Anita (Reception)', 'role' => 'Receptionist'],
+    ['role_id' => 5, 'username' => 'pharmacist', 'suffix' => 'Pharmacist Raj', 'role' => 'Pharmacist'],
 ];
 
-// Seed Role Permissions definitions
-$ROLE_PERMISSIONS = [
-    'Provider'     => ['patients.view', 'patients.create', 'patients.edit', 'appointments.view', 'appointments.create', 'appointments.manage', 'prescriptions.view', 'prescriptions.create', 'billing.view', 'billing.create', 'reports.view'],
-    'Nurse'        => ['patients.view', 'patients.create', 'patients.edit', 'appointments.view', 'appointments.create', 'appointments.manage'],
-    'Receptionist' => ['appointments.view', 'appointments.create'],
+$rolePermissions = [
+    'Admin'        => ['all'],
+    'Provider'     => ['appointments.view', 'appointments.create', 'patients.view', 'patients.create', 'prescriptions.view', 'prescriptions.create', 'billing.view'],
+    'Nurse'        => ['appointments.view', 'patients.view', 'vitals.record'],
+    'Receptionist' => ['appointments.view', 'appointments.create', 'patients.view', 'billing.view', 'billing.create'],
     'Pharmacist'   => ['prescriptions.view', 'prescriptions.dispense'],
+    'Patient'      => ['appointments.view', 'appointments.create', 'prescriptions.view', 'billing.view'],
+];
+
+$patientData = [
+    ['name' => 'Rajesh Kumar',   'email' => 'patient1@%s.com', 'gender' => 'Male',   'dob' => '1985-06-15', 'history'=>'Diabetes'],
+    ['name' => 'Priya Sharma',   'email' => 'patient2@%s.com', 'gender' => 'Female', 'dob' => '1990-07-22', 'history'=>'Asthma'],
+    ['name' => 'Arun Patel',     'email' => 'patient3@%s.com', 'gender' => 'Male',   'dob' => '1978-11-08', 'history'=>'Hypertension'],
+    ['name' => 'Deepika Rajan',  'email' => 'patient4@%s.com', 'gender' => 'Female', 'dob' => '1995-01-30', 'history'=>'Migraine'],
+    ['name' => 'Suresh Iyer',    'email' => 'patient5@%s.com', 'gender' => 'Male',   'dob' => '1965-05-12', 'history'=>'COPD'],
 ];
 
 $provisioned = [];
 
-echo "--- Provisioning Tenants & Staff ---\n";
 foreach ($clinics as $c) {
-    $dbName   = "clinic_tenant_{$c['code']}_db";
-    $dbUser   = "clinic_{$c['code']}";
-    $dbPass   = bin2hex(random_bytes(16));
-    $expires  = date('Y-m-d H:i:s', strtotime('+' . ($planDays[$c['plan']] ?? 30) . ' days'));
+    $dbName  = "clinic_tenant_{$c['code']}_db";
+    $dbUser  = "clinic_{$c['code']}";
+    $dbPass  = bin2hex(random_bytes(16));
+    $expires = date('Y-m-d H:i:s', strtotime('+365 days'));
 
-    echo "  Provisioning {$c['code']}...\n";
+    echo "  Processing {$c['code']}...\n";
 
     try {
+        // Create DB and user
         $pdo->exec("CREATE DATABASE IF NOT EXISTS {$dbName} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
         $pdo->exec("DROP USER IF EXISTS '{$dbUser}'@'%'");
         $pdo->exec("CREATE USER '{$dbUser}'@'%' IDENTIFIED BY '{$dbPass}'");
         $pdo->exec("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER ON {$dbName}.* TO '{$dbUser}'@'%'");
         $pdo->exec("FLUSH PRIVILEGES");
-        
+
+        // Use tenant DB
         $pdo->exec("USE {$dbName}");
         foreach ($schemaStmts as $sql) $pdo->exec($sql);
         foreach ($seedStmts as $sql) $pdo->exec($sql);
 
-        // Seed Role Permissions
-        foreach ($ROLE_PERMISSIONS as $roleName => $permKeys) {
-            $roleId = $STAFF_TEMPLATES[$roleName]['role_id'];
-            $existingPerms = $pdo->query("SELECT COUNT(*) AS cnt FROM role_permissions WHERE role_id = {$roleId}")->fetch(PDO::FETCH_ASSOC);
-            if ((int)$existingPerms['cnt'] == 0) {
-                $inList = implode(',', array_map(fn($k) => "'{$k}'", $permKeys));
-                $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, created_at) SELECT {$roleId}, id, NOW() FROM permissions WHERE permission_key IN ({$inList})");
+        // Register tenant in master DB
+        $pdo->exec("USE {$MASTER_DB}");
+        $stmt2 = $pdo->prepare("INSERT INTO tenants (tenant_code, name, slug, email, plan, status, subscription_starts_at, subscription_expires_at, db_host, db_port, db_name, db_username, db_password, max_users, max_patients, max_doctors, created_by_super_admin_id, created_at, updated_at) VALUES (:code, :name, :slug, :email, :plan, 'active', NOW(), :expires, :host, :port, :dbname, :dbuser, :dbpass, 100, 500, 20, 1, NOW(), NOW())");
+        $stmt2->execute(['code'=>$c['code'], 'name'=>$c['name'], 'slug'=>$c['code'], 'email'=>$c['email'], 'plan'=>$c['plan'], 'expires'=>$expires, 'host'=>$DB_HOST, 'port'=>$DB_PORT, 'dbname'=>$dbName, 'dbuser'=>$dbUser, 'dbpass'=>$dbPass]);
+        $tenantId = $pdo->lastInsertId();
+
+        $pdo->exec("USE {$dbName}");
+
+        $pdo->exec("USE {$dbName}");
+        $createdUsers = [];
+
+        // Seed Staff
+        foreach ($staffTemplate as $staff) {
+            $username = "{$c['code']}_{$staff['username']}";
+            $email    = "{$staff['username']}@{$c['code']}.com";
+            $fullName = "{$staff['suffix']} - " . ucfirst($c['code']);
+            $hashed   = password_hash($c['pass'], PASSWORD_ARGON2ID, $ARGON_OPTIONS);
+
+            $stmt = $pdo->prepare("INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, status, created_at, updated_at) VALUES (:rid, :u, :e, :eh, :p, :n, 'active', NOW(), NOW())");
+            $stmt->execute(['rid'=>$staff['role_id'], 'u'=>$username, 'e'=>aes_encrypt($email, $ENCRYPTION_KEY), 'eh'=>sha_hash($email), 'p'=>$hashed, 'n'=>aes_encrypt($fullName, $ENCRYPTION_KEY)]);
+            $uid = $pdo->lastInsertId();
+
+            $pdo->exec("INSERT INTO staff (user_id, tenant_id, status, created_at) VALUES ({$uid}, {$tenantId}, 'active', NOW())");
+            $createdUsers[] = ['username' => $username, 'role' => $staff['role']];
+        }
+
+        // Seed 5 Patients
+        $pIds = [];
+        foreach ($patientData as $p) {
+            $email = sprintf($p['email'], $c['code']);
+            $uName = "{$c['code']}_patient_" . (count($pIds) + 1);
+            $hashed = password_hash($c['pass'], PASSWORD_ARGON2ID, $ARGON_OPTIONS);
+
+            // Patient User
+            $stmt = $pdo->prepare("INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, status, created_at, updated_at) VALUES (6, :u, :e, :eh, :p, :n, 'active', NOW(), NOW())");
+            $stmt->execute(['u'=>$uName, 'e'=>aes_encrypt($email, $ENCRYPTION_KEY), 'eh'=>sha_hash($email), 'p'=>$hashed, 'n'=>aes_encrypt($p['name'], $ENCRYPTION_KEY)]);
+            $uid = $pdo->lastInsertId();
+
+            // Patient Record
+            $stmtP = $pdo->prepare("INSERT INTO patients (tenant_id, encrypted_name, name_hash, encrypted_email, email_hash, encrypted_gender, encrypted_medical_history, encrypted_date_of_birth, status, created_at) VALUES (:tid, :n, :nh, :e, :eh, :g, :h, :d, 'active', NOW())");
+            $stmtP->execute([
+                'tid' => $tenantId,
+                'n'   => aes_encrypt($p['name'], $ENCRYPTION_KEY),
+                'nh'  => sha_hash($p['name']),
+                'e'   => aes_encrypt($email, $ENCRYPTION_KEY),
+                'eh'  => sha_hash($email),
+                'g'   => aes_encrypt($p['gender'], $ENCRYPTION_KEY),
+                'h'   => aes_encrypt($p['history'] ?? 'None', $ENCRYPTION_KEY),
+                'd'   => aes_encrypt($p['dob'], $ENCRYPTION_KEY),
+            ]);
+            $pid = $pdo->lastInsertId();
+            $pIds[] = $pid;
+
+            // Link user to patient
+            $pdo->prepare("UPDATE users SET patient_id = :pid WHERE id = :uid")->execute(['pid'=>$pid, 'uid'=>$uid]);
+            $createdUsers[] = ['username' => $uName, 'role' => 'Patient'];
+            
+            // Also register patient as staff (as requested: "all patients are must be create in staff with role patient")
+            $pdo->prepare("INSERT INTO staff (user_id, tenant_id, encrypted_department, status, created_at, updated_at) VALUES (:uid, :tid, :dept, 'active', NOW(), NOW())")
+                ->execute(['uid'=>$uid, 'tid'=>$tenantId, 'dept'=>aes_encrypt('Patient Services', $ENCRYPTION_KEY)]);
+
+            // Seed Clinical Data for each patient (2 instances each)
+            for ($i = 1; $i <= 2; $i++) {
+                // Appointment
+                $stmtA = $pdo->prepare("INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, encrypted_reason, status, created_at) VALUES (:tid, :pid, 2, DATE_ADD(NOW(), INTERVAL :days DAY), :reason, 'completed', NOW())");
+                $stmtA->execute(['tid'=>$tenantId, 'pid'=>$pid, 'days' => ($i * 5), 'reason' => aes_encrypt("General Followup $i", $ENCRYPTION_KEY)]);
+                $aid = $pdo->lastInsertId();
+
+                // Prescription
+                $stmtPr = $pdo->prepare("INSERT INTO prescriptions (tenant_id, appointment_id, patient_id, provider_id, encrypted_medicine_name, encrypted_dosage, duration_days, status, created_at) VALUES (:tid, :aid, :pid, 2, :m, :d, 7, 'dispensed', NOW())");
+                $stmtPr->execute(['tid'=>$tenantId, 'aid'=>$aid, 'pid'=>$pid, 'm'=>aes_encrypt("Medicine $i", $ENCRYPTION_KEY), 'd'=>aes_encrypt("1x daily", $ENCRYPTION_KEY)]);
+
+                // Billing
+                $invNum = strtoupper($c['code']) . "-INV-" . $pid . "-" . $i;
+                $stmtI = $pdo->prepare("INSERT INTO invoices (tenant_id, patient_id, appointment_id, provider_id, invoice_number, amount, total_amount, paid_amount, status, created_at) VALUES (:tid, :pid, :aid, 2, :num, 500.00, 500.00, 500.00, 'paid', NOW())");
+                $stmtI->execute(['tid'=>$tenantId, 'pid'=>$pid, 'aid'=>$aid, 'num'=>$invNum]);
             }
         }
 
-        // Register tenant in master DB first to get tenantId
-        $pdo->exec("USE {$MASTER_DB}");
-        $maxUsers = $planUsers[$c['plan']] ?? 10;
-        $stmt2 = $pdo->prepare("INSERT INTO tenants (tenant_code, name, slug, email, plan, status, subscription_starts_at, subscription_expires_at, db_host, db_port, db_name, db_username, db_password, max_users, max_patients, max_doctors, created_by_super_admin_id, created_at, updated_at) VALUES (:code, :name, :slug, :email, :plan, 'active', NOW(), :expires, :host, :port, :dbname, :dbuser, :dbpass, :maxu, 500, 10, 1, NOW(), NOW())");
-        $stmt2->execute(['code'=>$c['code'], 'name'=>$c['name'], 'slug'=>$c['code'], 'email'=>$c['email'], 'plan'=>$c['plan'], 'expires'=>$expires, 'host'=>$DB_HOST, 'port'=>$DB_PORT, 'dbname'=>$dbName, 'dbuser'=>$dbUser, 'dbpass'=>$dbPass, 'maxu'=>$maxUsers]);
-        $tenantId = $pdo->lastInsertId();
-        $pdo->exec("INSERT INTO master_audit_logs (super_admin_id, action, resource_type, resource_id, details, ip_address, created_at) VALUES (1, 'tenant_created', 'tenant', {$tenantId}, '{\"tenant_code\":\"{$c['code']}\"}', '127.0.0.1', NOW())");
-
-        // Seed Users
-        $pdo->exec("USE {$dbName}");
-        $createdUsers = [];
-        foreach ($STAFF_TEMPLATES as $roleName => $tpl) {
-            $username  = "{$c['code']}_{$tpl['username']}";
-            $password  = $c['pass'];
-            $email     = "{$tpl['email']}@{$c['code']}.com";
-            $fullName  = "{$tpl['name_suffix']} - " . ucfirst($c['code']);
-            
-            $hashedPass = password_hash($password, PASSWORD_ARGON2ID, $ARGON_OPTIONS);
-            $encEmail   = aes_encrypt($email, $ENCRYPTION_KEY);
-            $emailHash  = sha_hash($email);
-            $encName    = aes_encrypt($fullName, $ENCRYPTION_KEY);
-
-            $stmt = $pdo->prepare("INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash, encrypted_full_name, status, created_at, updated_at) VALUES (:role_id, :username, :enc_email, :email_hash, :password, :enc_name, 'active', NOW(), NOW())");
-            $stmt->execute(['role_id'=>$tpl['role_id'], 'username'=>$username, 'enc_email'=>$encEmail, 'email_hash'=>$emailHash, 'password'=>$hashedPass, 'enc_name'=>$encName]);
-            $userId = $pdo->lastInsertId();
-
-            $encDept   = !empty($tpl['department'])     ? aes_encrypt($tpl['department'], $ENCRYPTION_KEY)     : null;
-            $encSpec   = !empty($tpl['specialization']) ? aes_encrypt($tpl['specialization'], $ENCRYPTION_KEY) : null;
-            $encLic    = !empty($tpl['license'])        ? aes_encrypt($tpl['license'], $ENCRYPTION_KEY)        : null;
-
-            $staffStmt = $pdo->prepare("INSERT INTO staff (user_id, tenant_id, encrypted_department, encrypted_specialization, encrypted_license_number, hire_date, status, created_at, updated_at) VALUES (:uid, :tid, :dept, :spec, :lic, CURDATE(), 'active', NOW(), NOW())");
-            $staffStmt->execute(['uid'=>$userId, 'tid'=>$tenantId, 'dept'=>$encDept, 'spec'=>$encSpec, 'lic'=>$encLic]);
-
-            $createdUsers[] = ['username' => $username, 'role' => $roleName, 'password' => $password];
-        }
-
-        $provisioned[] = ['code'=>$c['code'], 'name'=>$c['name'], 'dbName'=>$dbName, 'tenantId'=>$tenantId, 'pass'=>$c['pass'], 'users'=>$createdUsers];
-        echo "    [OK] DB {$dbName} prepared (Schema, roles, " . count($createdUsers) . " staff users)\n";
+        $provisioned[] = ['code'=>$c['code'], 'name'=>$c['name'], 'pass'=>$c['pass'], 'users'=>$createdUsers];
+        echo "    [OK] {$c['code']} provisioned.\n";
 
     } catch (Exception $e) {
         echo "  [FAILED] {$c['code']}: " . $e->getMessage() . "\n";
     }
 }
 
-// STEP 3 - Comprehensive Sample Data
-echo "\n--- Seeding Comprehensive Sample Data ---\n";
-
-$patientData = [
-    ['name'=>'Rajesh Kumar',       'phone'=>'+919876543210','email'=>'rajesh.kumar@email.com',    'gender'=>'Male',  'dob'=>'1985-03-15','blood'=>'A+', 'history'=>'Type 2 Diabetes. On Metformin 500mg BD. HbA1c: 7.2%.',                     'address'=>'12, MG Road, Chennai 600028',                'emergency'=>'Meena Kumar: +919876543200'],
-    ['name'=>'Priya Sharma',       'phone'=>'+919876543211','email'=>'priya.sharma@email.com',    'gender'=>'Female','dob'=>'1990-07-22','blood'=>'B+', 'history'=>'Bronchial Asthma since childhood. Uses Salbutamol inhaler PRN.',           'address'=>'45, Anna Nagar, Chennai 600040',             'emergency'=>'Vikram Sharma: +919876543201'],
-    ['name'=>'Arun Patel',         'phone'=>'+919876543212','email'=>'arun.patel@email.com',      'gender'=>'Male',  'dob'=>'1978-11-08','blood'=>'O+', 'history'=>'Hypertension Stage 2. On Amlodipine 5mg + Losartan 50mg.',                'address'=>'78, T Nagar, Chennai 600017',                'emergency'=>'Sunita Patel: +919876543202'],
-    ['name'=>'Deepika Rajan',      'phone'=>'+919876543213','email'=>'deepika.rajan@email.com',   'gender'=>'Female','dob'=>'1995-01-30','blood'=>'AB+','history'=>'Migraine with aura. On Sumatriptan 50mg PRN. Frequency: 2-3/month.',       'address'=>'23, Adyar, Chennai 600020',                  'emergency'=>'Rajan M: +919876543203'],
-    ['name'=>'Suresh Iyer',        'phone'=>'+919876543214','email'=>'suresh.iyer@email.com',     'gender'=>'Male',  'dob'=>'1965-05-12','blood'=>'A-', 'history'=>'COPD Gold Stage II. On Tiotropium + Budesonide/Formoterol.',               'address'=>'56, Mylapore, Chennai 600004',               'emergency'=>'Lakshmi Iyer: +919876543204'],
-    ['name'=>'Anita Deshmukh',     'phone'=>'+919876543215','email'=>'anita.deshmukh@email.com',  'gender'=>'Female','dob'=>'1988-09-18','blood'=>'B-', 'history'=>'Hypothyroidism. On Levothyroxine 75mcg OD. TSH last: 3.8.',               'address'=>'89, Velachery, Chennai 600042',              'emergency'=>'Rakesh Deshmukh: +919876543205'],
-    ['name'=>'Vikram Singh',       'phone'=>'+919876543216','email'=>'vikram.singh@email.com',    'gender'=>'Male',  'dob'=>'1972-12-25','blood'=>'O-', 'history'=>'Chronic Kidney Disease Stage 3. eGFR: 42. On Enalapril.',                 'address'=>'34, Porur, Chennai 600116',                  'emergency'=>'Kavita Singh: +919876543206'],
-    ['name'=>'Kavitha Nair',       'phone'=>'+919876543217','email'=>'kavitha.nair@email.com',    'gender'=>'Female','dob'=>'1992-04-05','blood'=>'A+', 'history'=>'Iron Deficiency Anemia. Hb: 9.2. On Ferrous Sulphate 200mg BD.',          'address'=>'67, Guindy, Chennai 600032',                 'emergency'=>'Mohan Nair: +919876543207'],
-    ['name'=>'Mohammed Farhan',    'phone'=>'+919876543218','email'=>'farhan.m@email.com',        'gender'=>'Male',  'dob'=>'1980-08-14','blood'=>'B+', 'history'=>'Gastroesophageal Reflux Disease. On Pantoprazole 40mg OD.',                'address'=>'12, Triplicane, Chennai 600005',             'emergency'=>'Ayesha Farhan: +919876543208'],
-    ['name'=>'Lakshmi Venkatesh',  'phone'=>'+919876543219','email'=>'lakshmi.v@email.com',       'gender'=>'Female','dob'=>'1960-02-28','blood'=>'AB-','history'=>'Osteoarthritis bilateral knees. On Celecoxib 200mg OD + Physiotherapy.',   'address'=>'90, Tambaram, Chennai 600045',               'emergency'=>'Venkatesh R: +919876543209'],
-    ['name'=>'Karthik Subramani',  'phone'=>'+919876543220','email'=>'karthik.s@email.com',       'gender'=>'Male',  'dob'=>'1998-06-10','blood'=>'O+', 'history'=>'Allergic Rhinitis. On Cetirizine 10mg OD + Fluticasone nasal spray.',      'address'=>'15, Chromepet, Chennai 600044',              'emergency'=>'Subramani K: +919876543210'],
-    ['name'=>'Revathi Krishnan',   'phone'=>'+919876543221','email'=>'revathi.k@email.com',       'gender'=>'Female','dob'=>'1983-10-20','blood'=>'A+', 'history'=>'Polycystic Ovary Syndrome. On OCP. BMI: 28.5.',                           'address'=>'28, Nungambakkam, Chennai 600034',           'emergency'=>'Krishnan P: +919876543211'],
-    ['name'=>'Ganesh Prasad',      'phone'=>'+919876543222','email'=>'ganesh.p@email.com',        'gender'=>'Male',  'dob'=>'1975-07-04','blood'=>'B-', 'history'=>'Type 1 Diabetes since age 12. On Insulin Glargine + Lispro. Pump user.',  'address'=>'41, Kodambakkam, Chennai 600024',            'emergency'=>'Sita Prasad: +919876543212'],
-    ['name'=>'Sneha Reddy',        'phone'=>'+919876543223','email'=>'sneha.r@email.com',         'gender'=>'Female','dob'=>'2000-03-08','blood'=>'O+', 'history'=>'Generalized Anxiety Disorder. On Escitalopram 10mg OD.',                  'address'=>'53, Kilpauk, Chennai 600010',                'emergency'=>'Reddy V: +919876543213'],
-    ['name'=>'Harish Babu',        'phone'=>'+919876543224','email'=>'harish.b@email.com',        'gender'=>'Male',  'dob'=>'1970-11-15','blood'=>'AB+','history'=>'Coronary Artery Disease. Post-CABG (2022). On Aspirin + Atorvastatin.',    'address'=>'76, Egmore, Chennai 600008',                 'emergency'=>'Padma Babu: +919876543214'],
-];
-
-$appointmentReasons = ['Routine monthly diabetes checkup', 'Persistent dry cough', 'Blood pressure monitoring', 'Follow-up after surgery', 'Annual health screening', 'Chest tightness', 'Skin rash itching', 'Chronic lower back pain', 'Fever and sore throat', 'Joint pain and morning stiffness', 'Routine eye examination', 'Anxiety symptoms', 'Vaccination consultation', 'Pre-operative assessment', 'Headache and dizziness'];
-$appointmentStatuses = ['scheduled','scheduled','completed','completed','cancelled','no_show','completed','completed','scheduled','completed','cancelled','scheduled','completed','scheduled','completed'];
-
-$medicines = [
-    ['name'=>'Metformin 500mg',         'dosage'=>'1 tablet twice daily after meals',       'days'=>90, 'notes'=>'Monitor blood glucose.'],
-    ['name'=>'Amlodipine 5mg',          'dosage'=>'1 tablet once daily in the morning',     'days'=>30, 'notes'=>'Monitor BP weekly.'],
-    ['name'=>'Atorvastatin 20mg',       'dosage'=>'1 tablet at bedtime',                    'days'=>30, 'notes'=>'Lipid panel after 3 months.'],
-    ['name'=>'Pantoprazole 40mg',       'dosage'=>'1 tablet before breakfast',               'days'=>14, 'notes'=>'Take 30 min before meal.'],
-    ['name'=>'Cetirizine 10mg',         'dosage'=>'1 tablet at bedtime',                    'days'=>10, 'notes'=>'May cause drowsiness.'],
-];
-$prescriptionStatuses = ['pending','pending','dispensed','dispensed','dispensed','pending','dispensed','dispensed','pending','dispensed'];
-
-$invoiceAmounts = [500,1200,800,3500,1500,2000,750,4500,600,2500,1800,950,3200,700,5000];
-$invoiceStatuses = ['paid','pending','paid','paid','overdue','paid','pending','paid','cancelled','paid','paid','pending','paid','overdue','paid'];
-$paymentMethods = ['cash','card','upi','card','','cash','','upi','','card','cash','','upi','','cash'];
-
-$notifTemplates = [
-    ['type'=>'system',      'title'=>'Welcome to ClinicOS!',                   'msg'=>'Your clinic has been provisioned successfully.'],
-    ['type'=>'appointment', 'title'=>'New Appointment Booked',                 'msg'=>'A new appointment has been scheduled for tomorrow.'],
-    ['type'=>'appointment', 'title'=>'Appointment Reminder',                   'msg'=>'Reminder: You have 3 appointments scheduled for today.'],
-    ['type'=>'billing',     'title'=>'Invoice Overdue',                        'msg'=>'Invoice INV-001 is overdue by 7 days.'],
-    ['type'=>'prescription','title'=>'Prescription Ready for Dispensing',       'msg'=>'A new prescription for Metformin 500mg is ready.'],
-];
-
-$noteTemplates = [
-    ['type'=>'note',      'msg'=>'Patient vitals: BP 130/85, Temp 98.4F, SpO2 98%, HR 72 bpm. Generally stable.'],
-    ['type'=>'diagnosis', 'msg'=>'Diagnosis: Acute Pharyngitis. Throat congested, mild tonsillar enlargement bilaterally.'],
-    ['type'=>'follow_up', 'msg'=>'Follow-up in 2 weeks. Repeat blood work for HbA1c and fasting glucose before next visit.'],
-    ['type'=>'note',      'msg'=>'Patient reports improvement in symptoms.'],
-    ['type'=>'diagnosis', 'msg'=>'Diagnosis: Allergic contact dermatitis. Erythematous papular rash on forearms.'],
-];
-
+// Final Summary
+echo "\n============================================\n";
+echo "  SETUP COMPLETE\n";
+echo "============================================\n";
 foreach ($provisioned as $t) {
-    try {
-        $pdo->exec("USE {$t['dbName']}");
-        $doctorId = 2; 
-        $pharmacistId = 5; 
-        $patientIds = [];
-
-        // Seed 15 patients
-        foreach ($patientData as $p) {
-            $stmt = $pdo->prepare("INSERT INTO patients (tenant_id, encrypted_name, name_hash, encrypted_phone, phone_hash, encrypted_email, email_hash, encrypted_medical_history, encrypted_date_of_birth, encrypted_gender, encrypted_blood_group, encrypted_address, encrypted_emergency_contact, status, created_at) VALUES (:tid, :enc_name, :hash_name, :enc_phone, :hash_phone, :enc_email, :hash_email, :enc_hist, :enc_dob, :enc_gender, :enc_blood, :enc_addr, :enc_emerg, 'active', NOW())");
-            $stmt->execute([
-                'tid'        => $t['tenantId'],
-                'enc_name'   => aes_encrypt($p['name'],      $ENCRYPTION_KEY),
-                'hash_name'  => sha_hash($p['name']),
-                'enc_phone'  => aes_encrypt($p['phone'],     $ENCRYPTION_KEY),
-                'hash_phone' => sha_hash($p['phone']),
-                'enc_email'  => aes_encrypt($p['email'],     $ENCRYPTION_KEY),
-                'hash_email' => sha_hash($p['email']),
-                'enc_hist'   => aes_encrypt($p['history'],   $ENCRYPTION_KEY),
-                'enc_dob'    => aes_encrypt($p['dob'],       $ENCRYPTION_KEY),
-                'enc_gender' => aes_encrypt($p['gender'],    $ENCRYPTION_KEY),
-                'enc_blood'  => aes_encrypt($p['blood'],     $ENCRYPTION_KEY),
-                'enc_addr'   => aes_encrypt($p['address'],   $ENCRYPTION_KEY),
-                'enc_emerg'  => aes_encrypt($p['emergency'], $ENCRYPTION_KEY),
-            ]);
-            $patientIds[] = (int) $pdo->lastInsertId();
-        }
-
-        // Seed Appointments
-        $appointmentIds = [];
-        for ($i = 0; $i < 15; $i++) {
-            $pid = $patientIds[$i % count($patientIds)];
-            $dayOffset = $i - 7;
-            $hour = 9 + ($i % 8);
-            $appt = $pdo->prepare("INSERT INTO appointments (tenant_id, patient_id, doctor_id, appointment_time, encrypted_reason, status, created_at) VALUES (:tid, :pid, :did, DATE_ADD(NOW(), INTERVAL :day DAY) + INTERVAL :hour HOUR, :enc_reason, :status, NOW())");
-            $appt->execute([
-                'tid'        => $t['tenantId'],
-                'pid'        => $pid,
-                'did'        => $doctorId,
-                'day'        => $dayOffset,
-                'hour'       => $hour,
-                'enc_reason' => aes_encrypt($appointmentReasons[$i], $ENCRYPTION_KEY),
-                'status'     => $appointmentStatuses[$i],
-            ]);
-            $appointmentIds[] = (int) $pdo->lastInsertId();
-        }
-
-        // Seed Prescriptions
-        for ($i = 0; $i < 10; $i++) {
-            $pid = $patientIds[$i % count($patientIds)];
-            $apptId = $appointmentIds[$i % count($appointmentIds)];
-            $med = $medicines[$i % count($medicines)];
-            $rxStatus = $prescriptionStatuses[$i];
-            $pharmId = ($rxStatus === 'dispensed') ? $pharmacistId : null;
-            $rx = $pdo->prepare("INSERT INTO prescriptions (tenant_id, appointment_id, patient_id, provider_id, pharmacist_id, encrypted_medicine_name, encrypted_dosage, encrypted_notes, duration_days, status, created_at) VALUES (:tid, :appt_id, :pid, :prov_id, :pharm_id, :enc_med, :enc_dos, :enc_notes, :dur, :status, NOW())");
-            $rx->execute([
-                'tid'=>$t['tenantId'], 'appt_id'=>$apptId, 'pid'=>$pid, 'prov_id'=>$doctorId, 'pharm_id'=>$pharmId, 'enc_med'=>aes_encrypt($med['name'], $ENCRYPTION_KEY), 'enc_dos'=>aes_encrypt($med['dosage'], $ENCRYPTION_KEY), 'enc_notes'=>aes_encrypt($med['notes'], $ENCRYPTION_KEY), 'dur'=>$med['days'], 'status'=>$rxStatus,
-            ]);
-        }
-
-        // Seed Invoices
-        for ($i = 0; $i < 15; $i++) {
-            $pid = $patientIds[$i % count($patientIds)];
-            $apptId = $appointmentIds[$i % count($appointmentIds)];
-            $amount = $invoiceAmounts[$i];
-            $tax = round($amount * 0.18, 2);
-            $total = round($amount + $tax, 2);
-            $invStatus = $invoiceStatuses[$i];
-            $paidAmt = ($invStatus === 'paid') ? $total : 0;
-            $invNumber = strtoupper($t['code']) . '-INV-' . str_pad($i + 1, 4, '0', STR_PAD_LEFT);
-            $payMethod = $paymentMethods[$i];
-            
-            $inv = $pdo->prepare("INSERT INTO invoices (tenant_id, invoice_number, patient_id, provider_id, appointment_id, amount, subtotal, tax, discount, total, total_amount, paid_amount, status, payment_method, paid_at, due_date, encrypted_notes, created_by, created_at) VALUES (:tid, :inv_num, :pid, :prov_id, :appt_id, :amount, :subtotal, :tax, 0, :total, :total_amount, :paid_amount, :status, :pay_method, " . ($invStatus === 'paid' ? "DATE_SUB(NOW(), INTERVAL 1 DAY)" : "NULL") . ", DATE_ADD(NOW(), INTERVAL 15 DAY), :enc_notes, 1, NOW())");
-            $inv->execute([
-                'tid'=>$t['tenantId'], 'inv_num'=>$invNumber, 'pid'=>$pid, 'prov_id'=>$doctorId, 'appt_id'=>$apptId, 'amount'=>$amount, 'subtotal'=>$amount, 'tax'=>$tax, 'total'=>$total, 'total_amount'=>$total, 'paid_amount'=>$paidAmt, 'status'=>$invStatus, 'pay_method'=>$payMethod?:null, 'enc_notes'=>aes_encrypt("Consultation charges", $ENCRYPTION_KEY)
-            ]);
-        }
-
-        // Notifications
-        foreach ($notifTemplates as $ni => $n) {
-            $notif = $pdo->prepare("INSERT INTO notifications (tenant_id, user_id, type, title, message, is_read, created_at) VALUES (:tid, 1, :type, :title, :msg, 0, NOW())");
-            $notif->execute(['tid'=>$t['tenantId'], 'type'=>$n['type'], 'title'=>$n['title'], 'msg'=>$n['msg']]);
-        }
-
-        // Notes
-        foreach ($noteTemplates as $ni => $note) {
-            $an = $pdo->prepare("INSERT INTO appointment_notes (tenant_id, appointment_id, author_id, message_encrypted, note_type, visible_to_role, created_at) VALUES (:tid, :appt_id, :auth_id, :enc_msg, :type, 'all', NOW())");
-            $an->execute(['tid'=>$t['tenantId'], 'appt_id'=>$appointmentIds[array_rand($appointmentIds)], 'auth_id'=>$doctorId, 'enc_msg'=>aes_encrypt($note['msg'], $ENCRYPTION_KEY), 'type'=>$note['type']]);
-        }
-
-        // Audit Logs
-        $pdo->exec("INSERT INTO audit_log (user_id, tenant_id, action, entity_type, entity_id, ip_address, created_at) VALUES (1, {$t['tenantId']}, 'patient.created', 'patient', {$patientIds[0]}, '127.0.0.1', NOW())");
-
-        echo "    [OK] {$t['code']} — ALL DATA SEEDED\n";
-
-    } catch (Exception $e) {
-        echo "  [FAILED] {$t['code']}: " . $e->getMessage() . "\n";
-    }
-}
-
-// SUMMARY
-echo "\n==========================================================================\n";
-echo "  SUPER ADMIN LOGIN CREDENTIALS\n";
-echo "==========================================================================\n";
-echo "  URL:       http://localhost:3000/superadmin (or similar admin route)\n";
-echo "  Email:     superadmin@clinic.io\n";
-echo "  Password:  SuperAdmin@2026\n";
-
-echo "\n==========================================================================\n";
-echo "  TENANT STAFF LOGIN CREDENTIALS\n";
-echo "==========================================================================\n";
-echo "  Frontend .env: REACT_APP_TENANT_CODE=[TENANT_CODE]\n\n";
-
-foreach ($provisioned as $t) {
-    echo "  ┌─────────────────────────────────────────────────────────────────┐\n";
-    $tenantLabel = strtoupper($t['code']);
-    echo "  │  TENANT: " . str_pad($tenantLabel, 53) . "│\n";
-    echo "  │  URL: http://{$t['code']}.localhost:3000/login" . str_pad('', 53 - strlen("URL: http://{$t['code']}.localhost:3000/login")) . "│\n";
-    echo "  ├──────────────┬───────────────────────┬──────────────────────────┤\n";
-    echo "  │  Role        │  Username             │  Password                │\n";
-    echo "  ├──────────────┼───────────────────────┼──────────────────────────┤\n";
+    echo "\nTenant: {$t['code']} (Password: {$t['pass']})\n";
     foreach ($t['users'] as $u) {
-        echo "  │  " . str_pad($u['role'], 12) . "│  " . str_pad($u['username'], 21) . "│  " . str_pad($u['password'], 24) . "│\n";
+        echo "  - " . str_pad($u['role'], 12) . ": {$u['username']}\n";
     }
-    echo "  └──────────────┴───────────────────────┴──────────────────────────┘\n\n";
 }
-
-echo "Example: Login to apollo as Provider -> apollo_doctor / Apollo@1234\n";
-echo "All done!\n\n";
+echo "\nAll redundant seed files can now be safely removed.\n";

@@ -25,11 +25,21 @@ class PatientService
 
     public function createPatient(array $data, int $tenantId): array
     {
+        $userId = $data['user_id'] ?? null;
+        unset($data['user_id']); // Don't pass to Patient model create
+
         $data['phone']     = preg_replace('/\D/', '', $data['phone']);
         $data['tenant_id'] = $tenantId;
 
         $id = $this->model->create($data);
         app_log("New Patient Registered: ID {$id}");
+
+        // ── Link to User Account ─────────────────────────────────────────────
+        if ($userId) {
+            $authModel = new \App\Modules\AuthTenant\Models\AuthModel();
+            $authModel->associatePatient((int)$userId, (int)$id);
+            app_log("Patient ID {$id} linked to User ID {$userId}");
+        }
 
         return $this->model->findById($id, $tenantId);
     }

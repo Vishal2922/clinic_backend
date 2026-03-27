@@ -48,6 +48,19 @@ class UserController extends Controller
         }
     }
 
+    public function providers(): void
+    {
+        $tenantId = $this->getTenantId();
+
+        try {
+            $providers = $this->rbacService->listProviders($tenantId);
+            Response::json(['message' => 'Providers retrieved', 'data' => ['providers' => $providers]], 200);
+        } catch (\Exception $e) {
+            app_log('List providers error: ' . $e->getMessage(), 'ERROR');
+            Response::error('Failed to retrieve providers', 500);
+        }
+    }
+
     public function show(string $id): void
     {
         $tenantId = $this->getTenantId();

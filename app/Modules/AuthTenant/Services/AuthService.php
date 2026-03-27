@@ -72,6 +72,7 @@ class AuthService
 
         $userId = $this->authModel->createUser([
             'role_id'             => $roleId,
+            'patient_id'          => $data['patient_id'] ?? null,
             'username'            => trim($data['username']),
             'encrypted_email'     => $encryptedEmail,
             'email_hash'          => $emailHash,
@@ -82,6 +83,32 @@ class AuthService
         ]);
 
         app_log("User registered: {$data['username']} (ID: {$userId}) in tenant {$tenantId}");
+
+        // ── Automated Clinical Patient Creation ──────────────────────────────────
+        if ($role['role_name'] === 'Patient' && !isset($data['patient_id'])) {
+            try {
+                $patientService = new \App\Modules\Patients\Services\PatientService();
+                $patientData = [
+                    'name'            => $data['full_name'] ?? $data['username'],
+                    'email'           => $data['email'],
+                    'phone'           => $data['phone'] ?? '0000000000',
+                    'dob'             => $data['dob']   ?? null,
+                    'gender'          => $data['gender'] ?? 'Other',
+                    'medical_history' => 'Automated clinical record created during user registration.',
+                    'status'          => 'active',
+                ];
+                $newPatient = $patientService->createPatient($patientData, $tenantId);
+                
+                if ($newPatient && isset($newPatient['id'])) {
+                    $this->authModel->associatePatient($userId, (int)$newPatient['id']);
+                    app_log("Automated Patient Created and Linked: User ID {$userId} -> Patient ID {$newPatient['id']}");
+                }
+            } catch (\Throwable $e) {
+                 app_log("CRITICAL ERROR during Automated Patient Creation for User ID {$userId}: " . $e->getMessage(), 'error');
+                 app_log($e->getTraceAsString(), 'error');
+                 // We don't fail the whole registration, but we log the failure.
+            }
+        }
 
         return [
             'user_id'  => $userId,
@@ -126,6 +153,7 @@ class AuthService
             'role_id'     => (int) $user['role_id'],
             'role_name'   => $user['role_name'],
             'username'    => $user['username'],
+            'patient_id'  => $user['patient_id'] ?? null,
             'permissions' => $permissionKeys,
         ]);
 
@@ -157,6 +185,7 @@ class AuthService
                 'full_name'   => $decryptedName,
                 'role'        => $user['role_name'],
                 'role_id'     => (int) $user['role_id'],
+                'patient_id'  => $user['patient_id'] ?? null,
                 'permissions' => $permissionKeys,
                 'tenant_id'   => $tenantId,
             ],
@@ -201,6 +230,7 @@ class AuthService
             'role_id'     => (int) $user['role_id'],
             'role_name'   => $user['role_name'],
             'username'    => $user['username'],
+            'patient_id'  => $user['patient_id'] ?? null,
             'permissions' => $permissionKeys,
         ]);
 
