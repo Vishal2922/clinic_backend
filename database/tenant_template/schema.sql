@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS `role_permissions` (
 CREATE TABLE IF NOT EXISTS `users` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `role_id` INT UNSIGNED NOT NULL,
+    `patient_id` INT UNSIGNED DEFAULT NULL,
     `username` VARCHAR(50) NOT NULL UNIQUE,
     `encrypted_email` TEXT,
     `email_hash` VARCHAR(64),

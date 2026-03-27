@@ -31,6 +31,11 @@ class RbacService
         return $this->userModel->getAllByTenant($tenantId, $page, $perPage, $filters);
     }
 
+    public function listProviders(int $tenantId): array
+    {
+        return $this->userModel->getProvidersByTenant($tenantId);
+    }
+
     public function createUser(array $data, int $tenantId): array
     {
         // Validate username uniqueness

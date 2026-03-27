@@ -118,6 +118,17 @@ class InvoiceController extends Controller
                 'invoice',
                 (int) $result['id']
             );
+            
+            // Notify the Patient about the new invoice
+            NotificationHelper::notifyPatient(
+                $tenantId,
+                (int) $data['patient_id'],
+                'billing',
+                '🧾 New Invoice Generated',
+                "A new invoice ({$invoiceNum}) for ₹{$amount} has been generated for your record.",
+                'invoice',
+                (int) $result['id']
+            );
 
             Response::json([
                 'message' => 'Invoice generated successfully.',
@@ -191,6 +202,17 @@ class InvoiceController extends Controller
                 Response::error('Cannot modify a cancelled invoice.', 422);
             }
 
+            if ($invoice['status'] === 'paid') {
+                Response::error('Cannot modify a paid invoice.', 422);
+            }
+
+            // Require payment_method when Patient marks as paid
+            if ($userRole === 'Patient' && $data['status'] === 'paid') {
+                if (empty($data['payment_method'])) {
+                    Response::error('Payment method is required when marking as paid.', 422);
+                }
+            }
+
             $paidAt        = ($data['status'] === 'paid') ? date('Y-m-d H:i:s') : null;
             $paymentMethod = $data['payment_method'] ?? null;
             $this->invoiceModel->updateStatus((int) $id, $tenantId, $data['status'], $paidAt, $paymentMethod);
@@ -246,9 +268,12 @@ class InvoiceController extends Controller
     public function summary(Request $request, $id = null): void
     {
         $tenantId = $this->getTenantId();
+        $user     = $this->getAuthUser();
+        $userRole = $user['role_name'] ?? '';
 
         try {
-            $summary = $this->invoiceModel->getSummary($tenantId);
+            $patientId = ($userRole === 'Patient') ? ($user['patient_id'] ?? 0) : null;
+            $summary   = $this->invoiceModel->getSummary($tenantId, $patientId ? (int) $patientId : null);
 
             Response::json([
                 'message' => 'Billing summary retrieved.',

@@ -32,8 +32,8 @@ $providerOnly     = AuthorizeRole::class . ':Provider';
 $providerNurse    = AuthorizeRole::class . ':Provider,Nurse';
 $staff            = AuthorizeRole::class . ':Provider,Pharmacist,Admin';
 $clinicStaff      = AuthorizeRole::class . ':Admin,Provider,Nurse,Receptionist';
-$billingStaff     = AuthorizeRole::class . ':Admin,Provider';
-$billingAll       = AuthorizeRole::class . ':Admin,Provider,Patient';
+$billingStaff     = AuthorizeRole::class . ':Receptionist,Provider';
+$billingAll       = AuthorizeRole::class . ':Receptionist,Patient,Provider';
 $allAuthenticated = AuthorizeRole::class . ':Admin,Provider,Nurse,Patient,Pharmacist,Receptionist';
 
 
@@ -82,12 +82,12 @@ $router->group(['prefix' => '/api/patients', 'middleware' => [$tenant, $auth]], 
 // ═══════════════════════════════════════════════════════════
 // MODULE 4: APPOINTMENT MANAGEMENT
 // ═══════════════════════════════════════════════════════════
-$router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $csrf) {
+$router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth]], function ($router) use ($clinicStaff, $allAuthenticated, $csrf) {
 
-    $router->get('/',               [AppointmentController::class, 'index'], [$clinicStaff]);
-    $router->post('/book',          [AppointmentController::class, 'store'], [$clinicStaff, $csrf]);
+    $router->get('/',               [AppointmentController::class, 'index'], [$allAuthenticated]);
+    $router->post('/book',          [AppointmentController::class, 'store'], [$allAuthenticated, $csrf]);
     $router->patch('/{id}/status',  [AppointmentController::class, 'updateStatus'], [$clinicStaff, $csrf]);
-    $router->delete('/{id}/cancel', [AppointmentController::class, 'destroy'], [$clinicStaff]);
+    $router->delete('/{id}/cancel', [AppointmentController::class, 'destroy'], [$allAuthenticated]);
 });
 
 
@@ -96,9 +96,13 @@ $router->group(['prefix' => '/api/appointments', 'middleware' => [$tenant, $auth
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/prescriptions', 'middleware' => [$tenant, $auth]], function ($router) use ($providerOnly, $staff, $csrf) {
 
-    $router->get('/',     [PrescriptionController::class, 'index'],  [$staff]);           // GET list (Provider, Pharmacist, Admin)
-    $router->post('/',    [PrescriptionController::class, 'store'],  [$providerOnly, $csrf]); // CREATE (Provider only)
-    $router->put('/{id}', [PrescriptionController::class, 'update'], [$staff, $csrf]);    // UPDATE (Provider, Pharmacist, Admin)
+    $prescriptionRead = \App\Core\Middleware\AuthorizeRole::class . ':Provider,Pharmacist,Admin,Patient';
+
+    $router->get('/',              [PrescriptionController::class, 'index'],    [$prescriptionRead]);
+    $router->get('/{id}',          [PrescriptionController::class, 'show'],     [$prescriptionRead]);
+    $router->get('/{id}/download', [PrescriptionController::class, 'download'], [$prescriptionRead]);
+    $router->post('/',             [PrescriptionController::class, 'store'],    [$providerOnly, $csrf]); // CREATE (Provider only)
+    $router->put('/{id}',          [PrescriptionController::class, 'update'],   [$staff, $csrf]);        // UPDATE (Provider, Pharmacist, Admin)
 });
 
 
@@ -160,7 +164,7 @@ $router->group(['prefix' => '/api/notifications', 'middleware' => [$tenant, $aut
 // ═══════════════════════════════════════════════════════════
 $router->group(['prefix' => '/api/billing', 'middleware' => [$tenant, $auth]], function ($router) use ($billingStaff, $billingAll, $adminOnly, $csrf) {
 
-    $router->get('/summary',                  [InvoiceController::class, 'summary'],      [$billingStaff]);
+    $router->get('/summary',                  [InvoiceController::class, 'summary'],      [$billingAll]);
     $router->get('/invoices',                 [InvoiceController::class, 'index'],        [$billingAll]);
     $router->get('/invoices/{id}',            [InvoiceController::class, 'show'],         [$billingAll]);
     $router->post('/invoices',                [InvoiceController::class, 'store'],        [$billingStaff, $csrf]);
@@ -229,8 +233,9 @@ $router->group(['prefix' => '/api/settings', 'middleware' => [$tenant, $auth]], 
 $router->post('/api/settings/rotate-tokens', [SettingsController::class, 'rotateTokens'], [$tenant]);
 
 
-$router->get('/api/users/roles', [UserController::class, 'listRoles'], [$tenant, $auth, $clinicStaff]);
-$router->get('/api/users',       [UserController::class, 'index'],     [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users/roles',     [UserController::class, 'listRoles'], [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users',           [UserController::class, 'index'],     [$tenant, $auth, $clinicStaff]);
+$router->get('/api/users/providers', [UserController::class, 'providers'], [$tenant, $auth, $allAuthenticated]);
 
 // ═══════════════════════════════════════════════════════════
 // SUPER ADMIN MODULE — Platform Control Plane

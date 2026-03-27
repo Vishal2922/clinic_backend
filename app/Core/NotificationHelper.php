@@ -44,6 +44,30 @@ class NotificationHelper
     }
 
     /**
+     * Send a notification to a specific patient by their patient_id.
+     */
+    public static function notifyPatient(
+        int     $tenantId,
+        int     $patientId,
+        string  $type,
+        string  $title,
+        ?string $message = null,
+        ?string $entityType = null,
+        ?int    $entityId = null
+    ): void {
+        try {
+            $userId = self::resolveUserIdByPatientId($patientId);
+            if ($userId) {
+                self::notifyUser($tenantId, $userId, $type, $title, $message, $entityType, $entityId);
+            }
+        } catch (\Exception $e) {
+            if (function_exists('app_log')) {
+                app_log("NotificationHelper::notifyPatient failed: " . $e->getMessage(), 'ERROR');
+            }
+        }
+    }
+
+    /**
      * Send a notification to ALL users with a specific role in the tenant.
      */
     public static function notifyRole(
@@ -90,5 +114,18 @@ class NotificationHelper
              WHERE r.name = :role AND u.status = 'active' AND u.deleted_at IS NULL",
             ['role' => $roleName]
         );
+    }
+
+    /**
+     * Resolve user_id from patient_id.
+     */
+    private static function resolveUserIdByPatientId(int $patientId): ?int
+    {
+        $db = tenant_db();
+        $res = $db->fetch(
+            "SELECT id FROM users WHERE patient_id = :pid AND deleted_at IS NULL LIMIT 1",
+            ['pid' => $patientId]
+        );
+        return $res ? (int) $res['id'] : null;
     }
 }

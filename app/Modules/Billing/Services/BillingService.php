@@ -22,9 +22,10 @@ class BillingService
     // Status transitions allowed per role
     // FIX: Added 'partially_paid' and 'refunded' for Admin; 'partially_paid' for Provider.
     private const ROLE_TRANSITIONS = [
-        'Admin'    => ['pending', 'paid', 'partially_paid', 'overdue', 'cancelled', 'refunded'],
-        'Provider' => ['pending', 'paid', 'partially_paid', 'overdue'],
-        'Patient'  => ['paid'],
+        'Admin'        => [],
+        'Receptionist' => [],
+        'Provider'     => ['pending', 'paid', 'partially_paid', 'overdue'],
+        'Patient'      => ['paid'],
     ];
 
     public function __construct()

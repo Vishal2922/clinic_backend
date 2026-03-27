@@ -117,9 +117,9 @@ class AuthModel
     public function createUser(array $params): int
     {
         return $this->db()->insert(
-            'INSERT INTO users (role_id, username, encrypted_email, email_hash, password_hash,
+            'INSERT INTO users (role_id, patient_id, username, encrypted_email, email_hash, password_hash,
                                 encrypted_full_name, encrypted_phone, status)
-             VALUES (:role_id, :username, :encrypted_email, :email_hash, :password_hash,
+             VALUES (:role_id, :patient_id, :username, :encrypted_email, :email_hash, :password_hash,
                      :encrypted_full_name, :encrypted_phone, :status)',
             $params
         );
@@ -139,11 +139,14 @@ class AuthModel
     /**
      * Re-hash a user's password (when password_needs_rehash detects it).
      */
-    public function rehashPassword(int $userId, string $newHash): int
+    /**
+     * Associate a user ID with a clinical patient ID.
+     */
+    public function associatePatient(int $userId, int $patientId): int
     {
         return $this->db()->execute(
-            'UPDATE users SET password_hash = :hash WHERE id = :id',
-            ['hash' => $newHash, 'id' => $userId]
+            'UPDATE users SET patient_id = :pid, updated_at = NOW() WHERE id = :uid',
+            ['pid' => $patientId, 'uid' => $userId]
         );
     }
 }

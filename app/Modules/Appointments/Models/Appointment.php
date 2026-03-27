@@ -30,11 +30,16 @@ class Appointment
         return $row ? $this->decryptAppointment($row) : null;
     }
 
-    public function getAllByTenant(int $tenantId, ?string $status = null, int $page = 1, int $perPage = 15): array
+    public function getAllByTenant(int $tenantId, ?int $patientId = null, ?string $status = null, int $page = 1, int $perPage = 15): array
     {
         $offset = ($page - 1) * $perPage;
         $where = 'a.tenant_id = :tid AND a.deleted_at IS NULL';
         $params = ['tid' => $tenantId];
+
+        if ($patientId) {
+            $where .= ' AND a.patient_id = :pid';
+            $params['pid'] = $patientId;
+        }
 
         if ($status) {
             $where .= ' AND a.status = :status';
@@ -53,6 +58,7 @@ class Appointment
              LEFT JOIN patients p ON a.patient_id = p.id
              LEFT JOIN users u ON a.doctor_id = u.id
              WHERE $where
+             GROUP BY a.id
              ORDER BY a.appointment_time DESC
              LIMIT :limit OFFSET :offset",
             array_merge($params, ['limit' => $perPage, 'offset' => $offset])
@@ -111,7 +117,7 @@ class Appointment
         return $this->db()->fetchAll(
             "SELECT appointment_time FROM appointments
              WHERE doctor_id = :did AND DATE(appointment_time) = :date
-             AND status IN ('scheduled', 'arrived') AND deleted_at IS NULL",
+             AND status IN ('scheduled', 'arrived', 'pending') AND deleted_at IS NULL",
             ['did' => $doctorId, 'date' => $date]
         );
     }
@@ -121,7 +127,7 @@ class Appointment
         $result = $this->db()->fetch(
             "SELECT COUNT(*) as count FROM appointments
              WHERE doctor_id = :did
-             AND status IN ('scheduled', 'arrived', 'in-consultation')
+             AND status IN ('pending', 'scheduled', 'arrived', 'in-consultation')
              AND deleted_at IS NULL
              AND (
                  (appointment_time >= :start AND appointment_time < :end)
