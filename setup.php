@@ -16,7 +16,7 @@ ini_set('memory_limit', '512M');
 // CONFIGURATION (Edit these to match your local setup)
 // ==============================================================
 $DB_HOST = '127.0.0.1';
-$DB_PORT = '3308'; // Make sure this matches your MySQL port
+$DB_PORT = '3306'; // Make sure this matches your MySQL port
 $DB_USER = 'root';
 $DB_PASS = '';
 $MASTER_DB = 'clinic_master_db';
